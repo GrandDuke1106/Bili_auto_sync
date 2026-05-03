@@ -26,12 +26,8 @@ DEFAULT_CONFIG = {
         "tags": ["搬运", "AI翻译", "YouTube"]
     },
     "subtitle": {
-        # 注意：这里的路径必须相对于项目根目录是正确的
-        "zh_font_path": "configs/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf",
-        # 修改为最兼容的内置名称，带不带空格可能导致 FFmpeg 找不到
-        "zh_font_name": "NotoSansSC-Regular", 
-        "en_font_path": "configs/fonts/Fira_Code_v6.2/ttf/FiraCode-Regular.ttf",
-        "en_font_name": "FiraCode-Regular"
+        "zh_font_name": "Noto Sans SC", 
+        "en_font_name": "Fira Code"
     }
 }
 

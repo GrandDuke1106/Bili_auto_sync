@@ -12,6 +12,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
     config = load_config()
     
+    # 我们只读取字体名字
     zh_font = config['subtitle']['zh_font_name']
     en_font = config['subtitle']['en_font_name']
 
@@ -58,15 +59,10 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
 def hardcode_subtitles(video_path, ass_path, output_video_path):
     print(f"[*] 开始 FFmpeg 硬字幕压制 (H.265/HEVC 高压缩率模式)...")
     
-    # 强制指定字体目录，包含你的中文字体和英文字体所在位置
+    # 直接硬编码指定总的字体父目录
     fonts_dir = str(BASE_DIR / "configs" / "fonts")
-    fonts_dir_fira = str(BASE_DIR / "configs" / "fonts" / "Fira_Code_v6.2" / "ttf")
     ass_path_str = str(ass_path).replace('\\', '/')
-    
-    # Linux 下多个目录用冒号 : 隔开
-    fallback_fonts = f"{fonts_dir}:{fonts_dir_fira}"
 
-    # 设置环境变量，指引 FFmpeg 的字体配置器去哪里找字体
     env = os.environ.copy()
     env["FONTCONFIG_PATH"] = fonts_dir 
 
@@ -74,17 +70,16 @@ def hardcode_subtitles(video_path, ass_path, output_video_path):
         "ffmpeg",
         "-y", 
         "-i", str(video_path),
-        "-vf", f"ass='{ass_path_str}':fontsdir='{fallback_fonts}'", 
-        "-c:v", "libx265",    # 改为 H.265 (HEVC) 编码器
-        "-preset", "fast",    # H.265 用 fast 可以在速度和体积间取得较好的平衡
-        "-crf", "20",         # H.265 的 23 相当于 H.264 的 18~20 视觉质量，文件会明显变小
-        "-c:a", "copy",       # 音频直接复制，不重新编码
+        # 传递一个单独的目录，不再有冒号拼接
+        "-vf", f"ass='{ass_path_str}':fontsdir='{fonts_dir}'", 
+        "-c:v", "libx265",    
+        "-preset", "fast",    
+        "-crf", "23",         
+        "-c:a", "copy",       
         str(output_video_path)
     ]
     
     try:
-        # 使用 Popen 来劫持底层输出，将 stderr 合并到 stdout
-        # 这样 Python 的 Logger 就能顺利把 FFmpeg 的日志也写进 txt 文件了
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
@@ -95,7 +90,6 @@ def hardcode_subtitles(video_path, ass_path, output_video_path):
             universal_newlines=True
         )
 
-        # 实时逐行打印输出
         for line in process.stdout:
             print(line, end='')
 
