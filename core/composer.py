@@ -23,12 +23,12 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
     # 中文字幕样式
     style_zh = pysubs2.SSAStyle(
         fontname=zh_font,
-        fontsize=24,
+        fontsize=22,
         primarycolor=pysubs2.Color(255, 255, 255), 
         outlinecolor=pysubs2.Color(0, 0, 0),       
-        outline=2,                                 
+        outline=1,                                 
         shadow=0,
-        marginv=35                                 
+        marginv=25                                 
     )
     
     # 英文字幕样式
@@ -37,9 +37,9 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
         fontsize=14,
         primarycolor=pysubs2.Color(200, 200, 200), 
         outlinecolor=pysubs2.Color(0, 0, 0),
-        outline=1.2,
+        outline=0.6,
         shadow=0,
-        marginv=15                                 
+        marginv=5                                 
     )
 
     subs_ass.styles["Style_ZH"] = style_zh

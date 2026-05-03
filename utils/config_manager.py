@@ -13,13 +13,17 @@ DEFAULT_CONFIG = {
     "deepseek": {
         "api_key": "YOUR_DEEPSEEK_API_KEY_HERE",
         "base_url": "https://api.deepseek.com",
-        "model": "deepseek-v4-pro" # 新增：可以指定模型，例如 deepseek-reasoner
+        "model": "deepseek-v4-pro"
     },
     "youtube": {
         "target_urls": [
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ" 
         ],
-        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best" # 新增：最高画质格式
+        "channels": [
+            # "https://www.youtube.com/@SomeChannel"
+        ],
+        "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
+        "download_archive": "data/archive.txt"
     },
     "bilibili": {
         "tid": 122,  
