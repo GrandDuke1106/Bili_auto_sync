@@ -20,3 +20,8 @@ logs/
 *.srt
 *.ass
 *.vtt
+
+#biliup
+qrcode.png
+download.log
+ds_update.log

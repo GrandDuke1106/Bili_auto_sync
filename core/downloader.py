@@ -10,49 +10,67 @@ ARCHIVE_FILE = BASE_DIR / "data" / "archive.txt"
 
 def download_video():
     config = load_config()
-    target_url = config['youtube']['target_urls'][0]
-    yt_format = config['youtube'].get('format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best')
+    yt_config = config.get('youtube', {})
+    
+    urls = yt_config.get('target_urls', [])
+    channels = yt_config.get('channels', [])
+    all_targets = [url for url in (urls + channels) if url.strip()]
+    
+    if not all_targets:
+        print("[*] 没有配置任何 YouTube 视频或频道 URL。")
+        return []
+
+    yt_format = yt_config.get('format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best')
+    max_dl = str(yt_config.get('max_downloads_per_run', 3))
     
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     ARCHIVE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
+    # 智能清理
     for item in TEMP_DIR.glob("*"):
         if item.name != ".gitkeep":
             if item.is_file() or item.is_symlink():
-                item.unlink() # 删除普通文件或符号链接
+                item.unlink()
             elif item.is_dir():
-                shutil.rmtree(item) # 删除文件夹及其内部所有内容
+                shutil.rmtree(item)
 
     command = [
         "yt-dlp",
         "--download-archive", str(ARCHIVE_FILE),
-        "--max-downloads", "1",
+        "--ignore-errors",
+        "--max-downloads", max_dl,  # 限制最大下载数
         "--write-sub",
         "--write-auto-sub",
         "--sub-lang", "en",
         "--sub-format", "srt",
-        "-f", yt_format, # 使用配置的最高画质
-        "-o", f"{TEMP_DIR}/%(title)s.%(ext)s",
-        target_url
+        "--write-description",      # 【新增】下载 YouTube 原版简介
+        "-f", yt_format,
+        "-o", f"{TEMP_DIR}/%(title)s.%(ext)s"
     ]
+    command.extend(all_targets)
 
-    print(f"[*] 正在调用 yt-dlp 获取: {target_url} (使用最高画质)")
-    result = subprocess.run(command, text=True)
-    
-    if result.returncode != 0:
-        print("[!] yt-dlp 执行可能遇到错误或被中断。")
+    print(f"[*] 正在调用 yt-dlp，单次最多下载 {max_dl} 个新视频...")
+    subprocess.run(command, text=True)
 
-    video_file, sub_file = None, None
-    for file in TEMP_DIR.glob("*"):
-        if file.suffix == ".mp4": video_file = str(file)
-        elif file.suffix in [".srt", ".vtt", ".en.srt", ".en.vtt"]: sub_file = str(file)
+    downloaded_files = []
+    for video_file in TEMP_DIR.glob("*.mp4"):
+        if "_zh_sub" in video_file.name: 
+            continue
+            
+        sub_file, desc_file = None, None
+        
+        # 寻找字幕
+        for ext in [".srt", ".vtt"]:
+            possible_subs = list(TEMP_DIR.glob(f"{video_file.stem}*{ext}"))
+            if possible_subs:
+                sub_file = str(possible_subs[0])
+                break
+        
+        # 寻找简介文件
+        possible_desc = list(TEMP_DIR.glob(f"{video_file.stem}*.description"))
+        if possible_desc:
+            desc_file = str(possible_desc[0])
+                
+        downloaded_files.append((str(video_file), sub_file, desc_file))
 
-    if not video_file:
-        print("[*] 没有发现新视频 (可能已经下载过)。")
-        return None, None
-    
-    if sub_file:
-        print(f"[*] 下载成功！视频: {video_file} | 字幕: {sub_file}")
-    else:
-        print(f"[!] 下载了视频，但未找到英文字幕！")
-    return video_file, sub_file
+    return downloaded_files
