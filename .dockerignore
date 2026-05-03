@@ -1,0 +1,14 @@
+# .dockerignore
+.git
+.gitignore
+__pycache__/
+venv/
+
+configs/config.yaml
+configs/cookies.json
+data/
+logs/
+
+*.mp4
+*.srt
+*.ass
