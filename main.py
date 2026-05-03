@@ -45,13 +45,13 @@ def main():
             continue
 
         # 翻译字幕
-        chinese_texts, english_texts = translate_subtitles(srt_path)
+        chinese_texts, english_texts = translate_subtitles(srt_path, uploader_id)
         if not chinese_texts:
-            print("[!] 翻译失败，跳过。")
+            print("[!] 字幕翻译失败，跳过...")
             continue
 
-        # 【新增】让 AI 生成 B 站专用标题、简介和 Tag
-        b_title, b_desc, b_tags = generate_bilibili_meta(video_title, desc_path, chinese_texts, uploader_name)
+        # 让 AI 生成 B 站专用标题、简介和 Tag
+        b_title, b_desc, b_tags = generate_bilibili_meta(video_title, desc_path, chinese_texts, uploader_name, uploader_id)
 
         # 生成 ASS 和压制
         ass_path = TEMP_DIR / f"{video_title}.ass"

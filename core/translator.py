@@ -7,7 +7,7 @@ from utils.config_manager import load_config
 def chunk_list(lst, n):
     for i in range(0, len(lst), n): yield lst[i:i + n]
 
-def translate_subtitles(srt_path):
+def translate_subtitles(srt_path, uploader_id=""):
     if not srt_path: return [], []
     config = load_config()
     api_key = config['deepseek']['api_key']
@@ -17,6 +17,9 @@ def translate_subtitles(srt_path):
     if api_key == "YOUR_DEEPSEEK_API_KEY_HERE":
         print("[!] 请配置 DeepSeek API Key!")
         return [], []
+
+    style_name = config.get('bilibili', {}).get('channel_styles', {}).get(uploader_id, 'default')
+    sys_prompt = config.get('prompts', {}).get(style_name, {}).get('subtitles', config['prompts']['default']['subtitles'])
 
     client = OpenAI(api_key=api_key, base_url=base_url)
     subs = pysrt.open(srt_path)
@@ -35,12 +38,14 @@ def translate_subtitles(srt_path):
         )
         try:
             response = client.chat.completions.create(
-                model=model_name, # 使用配置的模型
+                model=model_name,
                 messages=[
-                    {"role": "system", "content": "你是一个严格遵循格式的字幕翻译助手。"},
+                    # 使用动态获取的系统提示词，并且强调分隔符规则
+                    {"role": "system", "content": f"{sys_prompt}\n\n重要：你必须严格保持输入文本的结构，英文输入是以 ' || ' 分隔的句子，你的中文输出也必须使用 ' || ' 作为分隔符，且输出的句子数量必须与输入完全一致。"},
                     {"role": "user", "content": prompt}
                 ],
-                temperature=0.3
+                # 如果是严谨科学，可以适当调低 temperature 让输出更稳定
+                temperature=0.2 if style_name == 'science_strict' else 0.4 
             )
             translated_text = response.choices[0].message.content.strip()
             translated_lines = [line.strip() for line in translated_text.split('||')]
@@ -59,7 +64,7 @@ def translate_subtitles(srt_path):
     return chinese_texts, english_texts
 
 
-def generate_bilibili_meta(title, desc_path, sample_subs, uploader=""):
+def generate_bilibili_meta(title, desc_path, sample_subs, uploader_name="", uploader_id=""):
     """使用 AI 根据原标题、原简介和部分字幕内容，生成 B 站专属的标题、简介和 Tag"""
     config = load_config()
     api_key = config['deepseek']['api_key']
@@ -79,17 +84,15 @@ def generate_bilibili_meta(title, desc_path, sample_subs, uploader=""):
             pass
             
     client = OpenAI(api_key=api_key, base_url=base_url)
-    
-    sys_prompt = """
-    你是一个 Bilibili 专业的视频搬运兼翻译运营。请根据提供的 YouTube 视频标题、简介和部分字幕内容，生成 B 站适合发布的元数据。
-    要求：
-    1. 标题 (title)：请根据视频所属的类别情景，翻译成中文。限制在 30 字符内。
-    2. 简介 (description)：根据视频所属的类别情景，翻译视频的简介。不要带原作者广告链接。
-    3. 标签 (tags)：根据内容提取 2 到 3 个精准的中文标签词汇。
-    总之，人名以及专有名词或者难翻译为中文的不翻译，尽量做到“信达雅”。
 
-    你必须且只能返回纯粹的 JSON 格式数据，格式如下：
-    {"title": "翻译后的标题", "description": "翻译后的简介", "tags": ["标签1", "标签2"]}
+    style_name = config.get('bilibili', {}).get('channel_styles', {}).get(uploader_id, 'default')
+    meta_prompt_base = config.get('prompts', {}).get(style_name, {}).get('meta', config['prompts']['default']['meta'])
+
+    sys_prompt = f"""
+    {meta_prompt_base}
+    
+    你必须严格以合法的 JSON 格式返回结果，不能包含任何其他说明文字，格式如下：
+    {{"title": "生成的中文标题", "description": "生成的简介", "tags": ["标签1", "标签2"]}}
     """
     
     user_prompt = f"原标题: {title}\n原简介: {desc_text}\n部分字幕: {' '.join(sample_subs[:15])}"
