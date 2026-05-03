@@ -1,4 +1,5 @@
 # core/composer.py
+import os
 import subprocess
 from pathlib import Path
 import pysubs2
@@ -10,13 +11,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
     config = load_config()
     
+    # 获取我们在配置中定义的准确的 FontName
     zh_font = config['subtitle']['zh_font_name']
     en_font = config['subtitle']['en_font_name']
 
     subs_srt = pysrt.open(srt_path)
     subs_ass = pysubs2.SSAFile()
     
-    # 中文字幕样式
     style_zh = pysubs2.SSAStyle(
         fontname=zh_font,
         fontsize=24,
@@ -27,7 +28,6 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
         marginv=35                                 
     )
     
-    # 英文字幕样式 (现在使用的是 Fira Code)
     style_en = pysubs2.SSAStyle(
         fontname=en_font,                          
         fontsize=14,
@@ -46,12 +46,7 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
             zh = chinese_texts[i]
             en = english_texts[i]
             ass_text = f"{{\\rStyle_ZH}}{zh}\\N{{\\rStyle_EN}}{en}"
-            
-            event = pysubs2.SSAEvent(
-                start=sub.start.ordinal, 
-                end=sub.end.ordinal, 
-                text=ass_text
-            )
+            event = pysubs2.SSAEvent(start=sub.start.ordinal, end=sub.end.ordinal, text=ass_text)
             subs_ass.append(event)
 
     subs_ass.save(output_ass_path, encoding="utf-8")
@@ -59,30 +54,42 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
 
 
 def hardcode_subtitles(video_path, ass_path, output_video_path):
-    print(f"[*] 开始 FFmpeg 硬字幕压制 (这可能会花费一些时间)...")
+    print(f"[*] 开始 FFmpeg 硬字幕压制 (保画质模式)...")
+    config = load_config()
     
+    # 获取字体的绝对路径
+    zh_font_file = str(BASE_DIR / config['subtitle']['zh_font_path']).replace('\\', '/')
+    en_font_file = str(BASE_DIR / config['subtitle']['en_font_path']).replace('\\', '/')
+    ass_path_str = str(ass_path).replace('\\', '/')
+    
+    # Linux 环境下 FFmpeg 解决字体找不到的终极方案：
+    # 强制将包含我们字体的目录作为 fontconfig 的目录
     fonts_dir = str(BASE_DIR / "configs" / "fonts")
-    ass_path_str = str(ass_path)
     
-    # 配置 FFmpeg 去 configs/fonts 目录寻找字体文件
-    vf_filter = f"ass='{ass_path_str}':fontsdir='{fonts_dir}'"
-
+    # 关键修改 1：不光指定 fontsdir，还可以使用 FFmpeg 内部变量
+    # 关键修改 2：使用 -crf 18 保证几乎无损的画质 (18~20被认为是视觉无损)
     command = [
         "ffmpeg",
         "-y", 
         "-i", str(video_path),
-        "-vf", vf_filter, 
+        "-vf", f"ass='{ass_path_str}':fontsdir='{fonts_dir}'", 
         "-c:v", "libx264",
-        "-preset", "fast",  
-        "-crf", "23",       
+        "-preset", "medium", # 将 fast 改为 medium 以获得更好的压缩比和画质保留
+        "-crf", "18",        # 极高画质
         "-c:a", "copy",     
         str(output_video_path)
     ]
     
+    # 临时设置环境变量，告诉 fontconfig 我们字体的存放位置
+    # 这是解决 Linux 找不到字体的杀手锏
+    env = os.environ.copy()
+    env["FONTCONFIG_PATH"] = fonts_dir 
+    
     try:
-        subprocess.run(command, check=True)
+        # 使用自定义的 env 运行
+        subprocess.run(command, check=True, env=env)
         print(f"[*] 视频压制成功: {output_video_path}")
         return True
     except subprocess.CalledProcessError as e:
-        print(f"[!] FFmpeg 压制失败！请检查视频格式或字体路径。错误码: {e.returncode}")
+        print(f"[!] FFmpeg 压制失败！错误码: {e.returncode}")
         return False

@@ -8,10 +8,9 @@ venv/
 # 必须忽略的配置和状态文件
 configs/config.yaml
 configs/cookies.json
-data/archive.txt
 
 # 忽略临时媒体文件
-data/temp_workspace/*
+data/*
 !data/temp_workspace/.gitkeep
 
 logs/
