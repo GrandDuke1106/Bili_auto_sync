@@ -1,6 +1,7 @@
 # core/composer.py
 import os
 import subprocess
+import sys
 from pathlib import Path
 import pysubs2
 import pysrt
@@ -11,13 +12,13 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
     config = load_config()
     
-    # 获取我们在配置中定义的准确的 FontName
     zh_font = config['subtitle']['zh_font_name']
     en_font = config['subtitle']['en_font_name']
 
     subs_srt = pysrt.open(srt_path)
     subs_ass = pysubs2.SSAFile()
     
+    # 中文字幕样式
     style_zh = pysubs2.SSAStyle(
         fontname=zh_font,
         fontsize=24,
@@ -28,6 +29,7 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
         marginv=35                                 
     )
     
+    # 英文字幕样式
     style_en = pysubs2.SSAStyle(
         fontname=en_font,                          
         fontsize=14,
@@ -54,42 +56,58 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
 
 
 def hardcode_subtitles(video_path, ass_path, output_video_path):
-    print(f"[*] 开始 FFmpeg 硬字幕压制 (保画质模式)...")
-    config = load_config()
+    print(f"[*] 开始 FFmpeg 硬字幕压制 (H.265/HEVC 高压缩率模式)...")
     
-    # 获取字体的绝对路径
-    zh_font_file = str(BASE_DIR / config['subtitle']['zh_font_path']).replace('\\', '/')
-    en_font_file = str(BASE_DIR / config['subtitle']['en_font_path']).replace('\\', '/')
+    # 强制指定字体目录，包含你的中文字体和英文字体所在位置
+    fonts_dir = str(BASE_DIR / "configs" / "fonts")
+    fonts_dir_fira = str(BASE_DIR / "configs" / "fonts" / "Fira_Code_v6.2" / "ttf")
     ass_path_str = str(ass_path).replace('\\', '/')
     
-    # Linux 环境下 FFmpeg 解决字体找不到的终极方案：
-    # 强制将包含我们字体的目录作为 fontconfig 的目录
-    fonts_dir = str(BASE_DIR / "configs" / "fonts")
-    
-    # 关键修改 1：不光指定 fontsdir，还可以使用 FFmpeg 内部变量
-    # 关键修改 2：使用 -crf 18 保证几乎无损的画质 (18~20被认为是视觉无损)
+    # Linux 下多个目录用冒号 : 隔开
+    fallback_fonts = f"{fonts_dir}:{fonts_dir_fira}"
+
+    # 设置环境变量，指引 FFmpeg 的字体配置器去哪里找字体
+    env = os.environ.copy()
+    env["FONTCONFIG_PATH"] = fonts_dir 
+
     command = [
         "ffmpeg",
         "-y", 
         "-i", str(video_path),
-        "-vf", f"ass='{ass_path_str}':fontsdir='{fonts_dir}'", 
-        "-c:v", "libx264",
-        "-preset", "medium", # 将 fast 改为 medium 以获得更好的压缩比和画质保留
-        "-crf", "18",        # 极高画质
-        "-c:a", "copy",     
+        "-vf", f"ass='{ass_path_str}':fontsdir='{fallback_fonts}'", 
+        "-c:v", "libx265",    # 改为 H.265 (HEVC) 编码器
+        "-preset", "fast",    # H.265 用 fast 可以在速度和体积间取得较好的平衡
+        "-crf", "20",         # H.265 的 23 相当于 H.264 的 18~20 视觉质量，文件会明显变小
+        "-c:a", "copy",       # 音频直接复制，不重新编码
         str(output_video_path)
     ]
     
-    # 临时设置环境变量，告诉 fontconfig 我们字体的存放位置
-    # 这是解决 Linux 找不到字体的杀手锏
-    env = os.environ.copy()
-    env["FONTCONFIG_PATH"] = fonts_dir 
-    
     try:
-        # 使用自定义的 env 运行
-        subprocess.run(command, check=True, env=env)
-        print(f"[*] 视频压制成功: {output_video_path}")
-        return True
-    except subprocess.CalledProcessError as e:
-        print(f"[!] FFmpeg 压制失败！错误码: {e.returncode}")
+        # 使用 Popen 来劫持底层输出，将 stderr 合并到 stdout
+        # 这样 Python 的 Logger 就能顺利把 FFmpeg 的日志也写进 txt 文件了
+        process = subprocess.Popen(
+            command,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, 
+            text=True,
+            env=env,
+            bufsize=1, 
+            universal_newlines=True
+        )
+
+        # 实时逐行打印输出
+        for line in process.stdout:
+            print(line, end='')
+
+        process.wait()
+        
+        if process.returncode == 0:
+            print(f"\n[*] 视频压制成功: {output_video_path}")
+            return True
+        else:
+            print(f"\n[!] FFmpeg 压制失败！错误码: {process.returncode}")
+            return False
+
+    except Exception as e:
+        print(f"\n[!] FFmpeg 运行出错: {e}")
         return False
