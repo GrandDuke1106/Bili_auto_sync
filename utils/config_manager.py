@@ -15,17 +15,20 @@ DEFAULT_CONFIG = {
         "base_url": "https://api.deepseek.com"
     },
     "youtube": {
-        # 这里可以是频道主页链接，也可以是单个视频的链接
+        # 目标链接：支持具体某个视频的 URL，也支持频道主页的 URL
         "target_urls": [
-            "https://www.youtube.com/watch?v=dQw4w9WgXcQ" # 替换为你想测试的视频或频道
+            "https://www.youtube.com/watch?v=dQw4w9WgXcQ" # 替换为你想测试的视频链接
         ]
     },
+    "bilibili": {
+        "tid": 122,  # 默认分区：野生技术协会
+        "tags": ["搬运", "AI翻译", "YouTube"]
+    },
     "subtitle": {
-        # 中文字体 (建议：思源黑体)
+        # 根据你传给我的文件结构，设置真实的字体路径
         "zh_font_path": "configs/fonts/Noto_Sans_SC/NotoSansSC-VariableFont_wght.ttf",
         "zh_font_name": "Noto Sans SC",
-        # 英文字体 (免费商用等宽，建议：Fira Code)
-        "en_font_path": "configs/fonts/FiraCode-Regular.ttf",
+        "en_font_path": "configs/fonts/Fira_Code_v6.2/ttf/FiraCode-Regular.ttf", # 使用普通的等宽字重
         "en_font_name": "Fira Code"
     }
 }
@@ -42,7 +45,7 @@ def init_configs():
     if not COOKIES_FILE.exists():
         with open(COOKIES_FILE, "w", encoding="utf-8") as f:
             json.dump({}, f)
-        print(f"[*] 已生成空的 B站 cookies 文件: {COOKIES_FILE}")
+        print(f"[*] 已生成空的 B站 cookies 文件: {COOKIES_FILE}。")
 
 def load_config():
     """加载配置"""

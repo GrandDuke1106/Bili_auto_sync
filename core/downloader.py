@@ -9,7 +9,7 @@ ARCHIVE_FILE = BASE_DIR / "data" / "archive.txt"
 
 def download_video():
     """
-    下载配置文件中指定的视频或频道最新视频，并提取英文字幕。
+    下载配置文件中指定的视频或频道的最新视频，并提取英文字幕。
     """
     config = load_config()
     target_url = config['youtube']['target_urls'][0]
@@ -22,14 +22,11 @@ def download_video():
         if file.name != ".gitkeep":
             file.unlink()
 
-    # yt-dlp 命令：
-    # --write-sub --write-auto-sub: 尝试下载人工字幕，如果没有则下载自动生成的字幕
-    # --sub-lang en: 只下载英文字幕
-    # --sub-format srt: 转换为 SRT 格式
+    # yt-dlp 命令
     command = [
         "yt-dlp",
         "--download-archive", str(ARCHIVE_FILE),
-        "--max-downloads", "1", # 即使是频道链接，每次也只下载一个最新的
+        "--max-downloads", "1", # 如果是频道，每次也只下载一个最新的
         "--write-sub",
         "--write-auto-sub",
         "--sub-lang", "en",
@@ -40,7 +37,6 @@ def download_video():
     ]
 
     print(f"[*] 正在调用 yt-dlp 获取: {target_url}")
-    # 允许打印 yt-dlp 的实时输出，方便你观察下载进度
     result = subprocess.run(command, text=True)
     
     if result.returncode != 0:

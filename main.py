@@ -40,12 +40,11 @@ def main():
     generate_ass(srt_path, chinese_texts, english_texts, ass_path)
 
     # 第四步：压制视频
-    # 在原视频名后加上 _zh_sub
     output_video_path = TEMP_DIR / f"{Path(video_path).stem}_zh_sub.mp4"
     success = hardcode_subtitles(video_path, ass_path, output_video_path)
 
     if success:
-        print("\n🎉 第一阶段任务完成！请检查 data/temp_workspace/ 目录下的成品视频。")
+        print("\n🎉 前置任务完成！请检查 data/temp_workspace/ 目录下的成品视频。")
 
 if __name__ == "__main__":
     main()
