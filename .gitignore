@@ -1,23 +1,20 @@
 # .gitignore
-# Python 缓存
 __pycache__/
 *.py[cod]
 *$py.class
-
-# 虚拟环境 (如果你以后在本地测试用)
 venv/
 .env
 
-# 配置文件 (绝对不能上传)
+# 必须忽略的配置和状态文件
 configs/config.yaml
 configs/cookies.json
+data/archive.txt
 
-# 临时数据和日志
-data/
+# 忽略临时媒体文件
+data/temp_workspace/*
+!data/temp_workspace/.gitkeep
+
 logs/
-*.log
-
-# 媒体文件
 *.mp4
 *.mkv
 *.m4a
