@@ -26,6 +26,7 @@ DEFAULT_CONFIG = {
         "tags": ["搬运", "AI翻译", "YouTube"]
     },
     "subtitle": {
+        "fonts_dir": "configs/fonts",
         "zh_font_name": "Noto Sans SC", 
         "en_font_name": "Fira Code"
     }

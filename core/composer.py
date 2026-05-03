@@ -2,6 +2,7 @@
 import os
 import subprocess
 import sys
+import shutil
 from pathlib import Path
 import pysubs2
 import pysrt
@@ -59,22 +60,44 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
 def hardcode_subtitles(video_path, ass_path, output_video_path):
     print(f"[*] 开始 FFmpeg 硬字幕压制 (H.265/HEVC 高压缩率模式)...")
     
-    # 直接硬编码指定总的字体父目录
-    fonts_dir = str(BASE_DIR / "configs" / "fonts")
+    # 1. 加载配置
+    config = load_config()
+    configured_fonts_dir = config.get("subtitle", {}).get("fonts_dir", "configs/fonts")
+    
+    # 2. 将配置的路径转换为绝对路径
+    # 如果用户填的是绝对路径，Path 会直接使用；如果是相对路径，会拼在 BASE_DIR 后面
+    fonts_base_dir = (BASE_DIR / configured_fonts_dir).resolve()
+    
+    # 3. 创建扁平化临时目录
+    flat_fonts_dir = BASE_DIR / "data" / "temp_workspace" / "flat_fonts"
+    flat_fonts_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 4. 将配置目录下的所有字体复制到扁平目录
+    print(f"[*] 正在从 {fonts_base_dir} 提取字体文件...")
+    if not fonts_base_dir.exists():
+        print(f"[!] 警告: 字体目录 {fonts_base_dir} 不存在！请检查配置。")
+    else:
+        for ext in ["*.ttf", "*.otf", "*.TTF", "*.OTF"]:
+            for font_file in fonts_base_dir.rglob(ext):
+                dest_file = flat_fonts_dir / font_file.name
+                if not dest_file.exists():
+                    shutil.copy2(font_file, dest_file)
+                
+    # 5. FFmpeg 指令
+    fonts_dir_str = str(flat_fonts_dir).replace('\\', '/')
     ass_path_str = str(ass_path).replace('\\', '/')
 
     env = os.environ.copy()
-    env["FONTCONFIG_PATH"] = fonts_dir 
+    env["FONTCONFIG_PATH"] = fonts_dir_str 
 
     command = [
         "ffmpeg",
         "-y", 
         "-i", str(video_path),
-        # 传递一个单独的目录，不再有冒号拼接
-        "-vf", f"ass='{ass_path_str}':fontsdir='{fonts_dir}'", 
-        "-c:v", "libx265",    
+        "-vf", f"ass='{ass_path_str}':fontsdir='{fonts_dir_str}'", 
+        "-c:v", "libx264",    
         "-preset", "fast",    
-        "-crf", "23",         
+        "-crf", "18",         
         "-c:a", "copy",       
         str(output_video_path)
     ]
