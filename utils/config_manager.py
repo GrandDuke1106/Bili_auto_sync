@@ -30,7 +30,7 @@ DEFAULT_CONFIG = {
         "enable_upload": False, 
         "delete_after_upload": True, 
         "tid": 122,          
-        "tags": ["搬运", "AI翻译", "YouTube"]
+        "tags": ["搬运", "熟肉", "YouTube"]
     },
     "subtitle": {
         "fonts_dir": "configs/fonts",

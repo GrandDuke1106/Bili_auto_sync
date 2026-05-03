@@ -29,11 +29,14 @@ def main():
         return
 
     # 2. 遍历处理
-    for video_path, srt_path, desc_path in downloads:
+    for video_path, srt_path, desc_path, uploader in downloads: 
         video_title = Path(video_path).stem
         print(f"\n{'='*40}")
-        print(f">>> 开始处理: {video_title}")
+        print(f">>> 开始处理视频: {video_title}")
         
+        if uploader: # 打印一下提取到的频道名
+            print(f"[*] 所属频道: {uploader}")
+
         if not srt_path:
             print("[!] 未找到字幕，跳过。")
             continue
@@ -45,7 +48,7 @@ def main():
             continue
 
         # 【新增】让 AI 生成 B 站专用标题、简介和 Tag
-        b_title, b_desc, b_tags = generate_bilibili_meta(video_title, desc_path, chinese_texts)
+        b_title, b_desc, b_tags = generate_bilibili_meta(video_title, desc_path, chinese_texts, uploader)
 
         # 生成 ASS 和压制
         ass_path = TEMP_DIR / f"{video_title}.ass"

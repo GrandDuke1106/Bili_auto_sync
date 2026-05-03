@@ -1,6 +1,7 @@
 # core/downloader.py
 import subprocess
 import shutil
+import json
 from pathlib import Path
 from utils.config_manager import load_config
 
@@ -37,6 +38,7 @@ def download_video():
     command = [
         "yt-dlp",
         "--download-archive", str(ARCHIVE_FILE),
+        "--write-info-json",
         "--ignore-errors",
         "--max-downloads", max_dl,  # 限制最大下载数
         "--write-sub",
@@ -58,6 +60,18 @@ def download_video():
             continue
             
         sub_file, desc_file = None, None
+        uploader = ""
+
+        # 解析 info.json 获取频道名
+        info_file = TEMP_DIR / f"{video_file.stem}.info.json"
+        if info_file.exists():
+            try:
+                with open(info_file, 'r', encoding='utf-8') as f:
+                    info_data = json.load(f)
+                    # 优先获取 uploader，如果没有则尝试获取 channel
+                    uploader = info_data.get('uploader', info_data.get('channel', ''))
+            except Exception as e:
+                print(f"[!] 读取频道元数据失败: {e}")
         
         # 寻找字幕
         for ext in [".srt", ".vtt"]:
@@ -71,6 +85,6 @@ def download_video():
         if possible_desc:
             desc_file = str(possible_desc[0])
                 
-        downloaded_files.append((str(video_file), sub_file, desc_file))
+        downloaded_files.append((str(video_file), sub_file, desc_file, uploader))
 
     return downloaded_files

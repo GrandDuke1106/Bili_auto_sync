@@ -23,12 +23,12 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
     # 中文字幕样式
     style_zh = pysubs2.SSAStyle(
         fontname=zh_font,
-        fontsize=22,
+        fontsize=20,
         primarycolor=pysubs2.Color(255, 255, 255), 
         outlinecolor=pysubs2.Color(0, 0, 0),       
         outline=1,                                 
         shadow=0,
-        marginv=25                                 
+        marginv=15                                 
     )
     
     # 英文字幕样式
@@ -47,8 +47,8 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
 
     for i, sub in enumerate(subs_srt):
         if i < len(chinese_texts) and i < len(english_texts):
-            zh = chinese_texts[i]
-            en = english_texts[i]
+            zh = chinese_texts[i].replace('\n', '\\N').replace('\r', '')
+            en = english_texts[i].replace('\n', '\\N').replace('\r', '')
             ass_text = f"{{\\rStyle_ZH}}{zh}\\N{{\\rStyle_EN}}{en}"
             event = pysubs2.SSAEvent(start=sub.start.ordinal, end=sub.end.ordinal, text=ass_text)
             subs_ass.append(event)

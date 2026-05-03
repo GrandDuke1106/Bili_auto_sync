@@ -59,7 +59,7 @@ def translate_subtitles(srt_path):
     return chinese_texts, english_texts
 
 
-def generate_bilibili_meta(title, desc_path, sample_subs):
+def generate_bilibili_meta(title, desc_path, sample_subs, uploader=""):
     """使用 AI 根据原标题、原简介和部分字幕内容，生成 B 站专属的标题、简介和 Tag"""
     config = load_config()
     api_key = config['deepseek']['api_key']
@@ -83,12 +83,12 @@ def generate_bilibili_meta(title, desc_path, sample_subs):
     sys_prompt = """
     你是一个 Bilibili 专业的视频搬运兼翻译运营。请根据提供的 YouTube 视频标题、简介和部分字幕内容，生成 B 站适合发布的元数据。
     要求：
-    1. 标题 (title)：翻译成中文，语气要吸引人，且必须在开头加上 "[熟肉]" 字样。限制在 60 字符内。
+    1. 标题 (title)：翻译成中文，语气要吸引人。限制在 30 字符内。
     2. 简介 (description)：翻译并总结视频的核心内容，语气生动。限制在 200 字内。不要带原作者广告链接。
     3. 标签 (tags)：根据内容提取 2 到 3 个精准的中文标签词汇。
     
     你必须且只能返回纯粹的 JSON 格式数据，格式如下：
-    {"title": "[熟肉]翻译后的标题", "description": "翻译后的简介", "tags": ["标签1", "标签2"]}
+    {"title": "翻译后的标题", "description": "翻译后的简介", "tags": ["标签1", "标签2"]}
     """
     
     user_prompt = f"原标题: {title}\n原简介: {desc_text}\n部分字幕: {' '.join(sample_subs[:15])}"
@@ -107,9 +107,18 @@ def generate_bilibili_meta(title, desc_path, sample_subs):
         
         res_text = response.choices[0].message.content.strip()
         meta_data = json.loads(res_text)
-        return meta_data.get("title", f"[熟肉] {title}"), meta_data.get("description"), meta_data.get("tags", [])
+
+        raw_title = meta_data.get("title", title).replace("[中字]", "").replace("[熟肉]", "").strip()
+        
+        if uploader:
+            final_title = f"[熟肉][@{uploader}]{raw_title}"
+        else:
+            final_title = f"[熟肉]{raw_title}"
+        
+        return final_title[:80], meta_data.get("description"), meta_data.get("tags", [])
         
     except Exception as e:
-        print(f"[!] 元数据 AI 生成失败 ({e})，将使用回退策略。")
-        # 重点修复：这里必须返回 3 个值！(标题, 简介, 标签列表)
-        return f"[熟肉] {title[:60]}", []
+        print(f"[!] 生成AI元数据失败 ({e})，使用默认格式...")
+        # 失败时的降级处理也加上频道名
+        fallback_prefix = f"[熟肉][@{uploader}]" if uploader else "[熟肉]"
+        return f"{fallback_prefix}{title[:60]}", []

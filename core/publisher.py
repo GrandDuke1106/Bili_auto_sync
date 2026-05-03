@@ -25,13 +25,14 @@ def upload_to_bilibili(video_path, b_title, b_desc, b_tags):
     safe_title = b_title[:80]
 
     command = [
-        "biliup", "upload",
+        "biliup", 
+        "-u", str(COOKIES_FILE),
+        "upload",
         str(video_path),
         "--title", safe_title,
         "--tid", tid,
         "--tag", final_tags,
-        "-c", str(COOKIES_FILE),
-        "--desc", b_desc  # 去掉了那句宣发文案，完全使用 AI 生成的简介
+        "--desc", b_desc
     ]
     
     try:
