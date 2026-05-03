@@ -1,5 +1,6 @@
 # core/downloader.py
 import subprocess
+import shutil
 from pathlib import Path
 from utils.config_manager import load_config
 
@@ -15,9 +16,12 @@ def download_video():
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     ARCHIVE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
-    for file in TEMP_DIR.glob("*"):
-        if file.name != ".gitkeep":
-            file.unlink()
+    for item in TEMP_DIR.glob("*"):
+        if item.name != ".gitkeep":
+            if item.is_file() or item.is_symlink():
+                item.unlink() # 删除普通文件或符号链接
+            elif item.is_dir():
+                shutil.rmtree(item) # 删除文件夹及其内部所有内容
 
     command = [
         "yt-dlp",
