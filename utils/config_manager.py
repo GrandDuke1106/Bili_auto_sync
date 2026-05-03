@@ -13,7 +13,7 @@ DEFAULT_CONFIG = {
     "deepseek": {
         "api_key": "YOUR_DEEPSEEK_API_KEY_HERE",
         "base_url": "https://api.deepseek.com",
-        "model": "deepseek-chat" # 新增：可以指定模型，例如 deepseek-reasoner
+        "model": "deepseek-v4-pro" # 新增：可以指定模型，例如 deepseek-reasoner
     },
     "youtube": {
         "target_urls": [
