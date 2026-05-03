@@ -13,7 +13,7 @@ DEFAULT_CONFIG = {
     "deepseek": {
         "api_key": "YOUR_DEEPSEEK_API_KEY_HERE",
         "base_url": "https://api.deepseek.com",
-        "model": "deepseek-v4-pro"
+        "model": "deepseek-v4-flash"
     },
     "youtube": {
         "target_urls": [
@@ -24,11 +24,11 @@ DEFAULT_CONFIG = {
         ],
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "download_archive": "data/archive.txt",
-        "max_downloads_per_run": 3  # 【新增】每次运行最多下载几个新视频，防止撑爆服务器
+        "max_downloads_per_run": 3  
     },
     "bilibili": {
-        "enable_upload": False,  # True 自动上传，False 仅处理不上传
-        "delete_after_upload": True, # 【新增】上传成功后是否删除原片和成品释放空间
+        "enable_upload": False, 
+        "delete_after_upload": True, 
         "tid": 122,          
         "tags": ["搬运", "AI翻译", "YouTube"]
     },

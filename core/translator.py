@@ -1,5 +1,6 @@
 # core/translator.py
 import pysrt
+import json
 from openai import OpenAI
 from utils.config_manager import load_config
 
@@ -11,7 +12,7 @@ def translate_subtitles(srt_path):
     config = load_config()
     api_key = config['deepseek']['api_key']
     base_url = config['deepseek']['base_url']
-    model_name = config['deepseek'].get('model', 'deepseek-chat') # 读取模型名称
+    model_name = config['deepseek'].get('model', 'deepseek-v4-flash') # 读取模型名称
     
     if api_key == "YOUR_DEEPSEEK_API_KEY_HERE":
         print("[!] 请配置 DeepSeek API Key!")
@@ -66,7 +67,7 @@ def generate_bilibili_meta(title, desc_path, sample_subs):
     model_name = config['deepseek'].get('model', 'deepseek-chat')
     
     if api_key == "YOUR_DEEPSEEK_API_KEY_HERE":
-        return title, "自动搬运", []
+        return title, " ", []
 
     # 读取原版简介
     desc_text = ""
@@ -110,4 +111,5 @@ def generate_bilibili_meta(title, desc_path, sample_subs):
         
     except Exception as e:
         print(f"[!] 元数据 AI 生成失败 ({e})，将使用回退策略。")
+        # 重点修复：这里必须返回 3 个值！(标题, 简介, 标签列表)
         return f"[熟肉] {title[:60]}", []
