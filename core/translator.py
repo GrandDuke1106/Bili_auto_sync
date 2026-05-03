@@ -114,8 +114,8 @@ def generate_bilibili_meta(title, desc_path, sample_subs, uploader_name="", uplo
 
         raw_title = meta_data.get("title", title).replace("[中字]", "").replace("[熟肉]", "").strip()
         
-        if uploader:
-            final_title = f"[熟肉][@{uploader}]{raw_title}"
+        if uploader_name:
+            final_title = f"[熟肉][{uploader_name}]{raw_title}"
         else:
             final_title = f"[熟肉]{raw_title}"
         
@@ -123,6 +123,5 @@ def generate_bilibili_meta(title, desc_path, sample_subs, uploader_name="", uplo
         
     except Exception as e:
         print(f"[!] 生成AI元数据失败 ({e})，使用默认格式...")
-        # 失败时的降级处理也加上频道名
-        fallback_prefix = f"[熟肉][{uploader}]" if uploader else "[熟肉]"
+        fallback_prefix = f"[熟肉][{uploader_name}]" if uploader_name else "[熟肉]"
         return f"{fallback_prefix}{title[:60]}", []
