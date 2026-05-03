@@ -8,7 +8,7 @@ from utils.config_manager import load_config
 BASE_DIR = Path(__file__).resolve().parent.parent
 COOKIES_FILE = BASE_DIR / "configs" / "cookies.json"
 
-def upload_to_bilibili(video_path, b_title, b_desc, b_tags, source_url="", uploader=""):
+def upload_to_bilibili(video_path, b_title, b_desc, b_tags, source_url="", uploader="", cover_path=""):
     config = load_config()
     bili_config = config.get('bilibili', {})
     
@@ -21,7 +21,7 @@ def upload_to_bilibili(video_path, b_title, b_desc, b_tags, source_url="", uploa
 
     # 合并配置文件基础标签和 AI 生成的标签
     base_tags = bili_config.get('tags', ["搬运"])
-    final_tags = ",".join(list(set(base_tags + b_tags))[:10]) # 去重且最多保留10个
+    final_tags = ",".join(list(set(base_tags + b_tags))[:10]) 
     tid = str(bili_config.get('tid', 122))
     
     safe_title = b_title[:80]
@@ -40,6 +40,10 @@ def upload_to_bilibili(video_path, b_title, b_desc, b_tags, source_url="", uploa
     
     if source_url:
         command.extend(["--source", source_url])
+
+    if cover_path:
+        command.extend(["--cover", str(cover_path)])
+        print(f"[*] 已挂载视频封面...")
 
     try:
         # 注意加上 cwd 以确保它能读到 cookie
@@ -75,11 +79,10 @@ def upload_to_bilibili(video_path, b_title, b_desc, b_tags, source_url="", uploa
                             print(f"[!] 加入合集失败：未能在最近稿件中找到该视频。")
                         else:
                             v_info = manager.get_video_info(aid)
-                            cid = v_info['pages'][0]['cid']
+                            cid = v_info['videos'][0]['cid']
                             
                             # 3. 提交至合集
                             manager.add_to_season(target_section_id, aid, cid, safe_title)
-                            print(f"[*] 已成功将视频加入合集: {target_season_name}")
                             
                 except Exception as e:
                     print(f"[!] 自动加入合集过程发生错误: {e}")

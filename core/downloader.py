@@ -39,6 +39,8 @@ def download_video():
         "yt-dlp",
         "--download-archive", str(ARCHIVE_FILE),
         "--write-info-json",
+        "--write-thumbnail",
+        "--convert-thumbnails", "png",
         "--ignore-errors",
         "--max-downloads", max_dl,
         "--write-sub",
@@ -63,6 +65,7 @@ def download_video():
         uploader_id = ""   # 用于后台合集映射
         uploader_name = "" # 用于前台标题展示
         source_url = ""
+        cover_path = ""
 
         # 解析 info.json 获取频道名
         info_file = TEMP_DIR / f"{video_file.stem}.info.json"
@@ -75,6 +78,13 @@ def download_video():
                     source_url = info_data.get('webpage_url', 'YouTube')
             except Exception as e:
                 print(f"[!] 读取频道元数据失败: {e}")
+
+        # 寻找下载下来的封面图片 (yt-dlp 通常存为 webp 或 jpg)
+        for ext in [".jpg", ".jpeg", ".png"]:
+            possible_covers = list(TEMP_DIR.glob(f"{video_file.stem}*{ext}"))
+            if possible_covers:
+                cover_path = str(possible_covers[0])
+                break
         
         # 寻找字幕
         for ext in [".srt", ".vtt"]:
@@ -88,6 +98,6 @@ def download_video():
         if possible_desc:
             desc_file = str(possible_desc[0])
                 
-        downloaded_files.append((str(video_file), sub_file, desc_file, uploader_id, uploader_name, source_url))
+        downloaded_files.append((str(video_file), sub_file, desc_file, uploader_id, uploader_name, source_url, cover_path))
 
     return downloaded_files

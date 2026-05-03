@@ -26,7 +26,7 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
         fontsize=20,
         primarycolor=pysubs2.Color(255, 255, 255), 
         outlinecolor=pysubs2.Color(0, 0, 0),       
-        outline=1,                                 
+        outline=0.8,                                 
         shadow=0,
         marginv=15                                 
     )
@@ -34,12 +34,12 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
     # 英文字幕样式
     style_en = pysubs2.SSAStyle(
         fontname=en_font,                          
-        fontsize=14,
+        fontsize=12,
         primarycolor=pysubs2.Color(200, 200, 200), 
         outlinecolor=pysubs2.Color(0, 0, 0),
-        outline=0.6,
+        outline=0.5,
         shadow=0,
-        marginv=5                                 
+        marginv=3                                 
     )
 
     subs_ass.styles["Style_ZH"] = style_zh
@@ -47,8 +47,21 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
 
     for i, sub in enumerate(subs_srt):
         if i < len(chinese_texts) and i < len(english_texts):
-            zh = chinese_texts[i].replace('\n', '\\N').replace('\r', '')
-            en = english_texts[i].replace('\n', '\\N').replace('\r', '')
+            zh_raw = chinese_texts[i].replace('\r', '')
+            en_raw = english_texts[i].replace('\r', '')
+
+            # 中文字数判断：如果小于等于 20 个字，直接删掉换行符；否则用 \N 换行
+            if len(zh_raw.replace('\n', '')) <= 20:
+                zh = zh_raw.replace('\n', '')
+            else:
+                zh = zh_raw.replace('\n', '\\N')
+
+            # 英文字符判断：如果小于等于 50 个字母，将换行符替换为【空格】防粘连；否则用 \N 换行
+            if len(en_raw.replace('\n', '')) <= 50:
+                en = en_raw.replace('\n', ' ')
+            else:
+                en = en_raw.replace('\n', '\\N')
+
             ass_text = f"{{\\rStyle_ZH}}{zh}\\N{{\\rStyle_EN}}{en}"
             event = pysubs2.SSAEvent(start=sub.start.ordinal, end=sub.end.ordinal, text=ass_text)
             subs_ass.append(event)
@@ -58,7 +71,7 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
 
 
 def hardcode_subtitles(video_path, ass_path, output_video_path):
-    print(f"[*] 开始 FFmpeg 硬字幕压制 (H.265/HEVC 高压缩率模式)...")
+    print(f"[*] 开始 FFmpeg 硬字幕压制...")
     
     # 1. 加载配置
     config = load_config()
@@ -97,7 +110,7 @@ def hardcode_subtitles(video_path, ass_path, output_video_path):
         "-vf", f"ass='{ass_path_str}':fontsdir='{fonts_dir_str}'", 
         "-c:v", "libx264",    
         "-preset", "fast",    
-        "-crf", "23",         
+        "-crf", "18",         
         "-c:a", "copy",       
         str(output_video_path)
     ]

@@ -22,7 +22,7 @@ def translate_subtitles(srt_path):
     subs = pysrt.open(srt_path)
     english_texts = [sub.text for sub in subs]
     chinese_texts = []
-    chunks = list(chunk_list(english_texts, 20))
+    chunks = list(chunk_list(english_texts, 100))
     print(f"[*] 开始翻译，使用模型: {model_name}...")
     
     for index, chunk in enumerate(chunks):
@@ -83,10 +83,11 @@ def generate_bilibili_meta(title, desc_path, sample_subs, uploader=""):
     sys_prompt = """
     你是一个 Bilibili 专业的视频搬运兼翻译运营。请根据提供的 YouTube 视频标题、简介和部分字幕内容，生成 B 站适合发布的元数据。
     要求：
-    1. 标题 (title)：翻译成中文，语气要吸引人。限制在 30 字符内。
-    2. 简介 (description)：翻译并总结视频的核心内容，语气生动。限制在 200 字内。不要带原作者广告链接。
+    1. 标题 (title)：请根据视频所属的类别情景，翻译成中文。限制在 30 字符内。
+    2. 简介 (description)：根据视频所属的类别情景，翻译视频的简介。不要带原作者广告链接。
     3. 标签 (tags)：根据内容提取 2 到 3 个精准的中文标签词汇。
-    
+    总之，人名以及专有名词或者难翻译为中文的不翻译，尽量做到“信达雅”。
+
     你必须且只能返回纯粹的 JSON 格式数据，格式如下：
     {"title": "翻译后的标题", "description": "翻译后的简介", "tags": ["标签1", "标签2"]}
     """
@@ -102,7 +103,7 @@ def generate_bilibili_meta(title, desc_path, sample_subs, uploader=""):
                 {"role": "system", "content": sys_prompt},
                 {"role": "user", "content": user_prompt}
             ],
-            temperature=0.7
+            temperature=0.5
         )
         
         res_text = response.choices[0].message.content.strip()

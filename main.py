@@ -29,7 +29,7 @@ def main():
         return
 
     # 2. 遍历处理
-    for video_path, srt_path, desc_path, uploader_id, uploader_name, source_url in downloads: 
+    for video_path, srt_path, desc_path, uploader_id, uploader_name, source_url, cover_path in downloads: 
         video_title = Path(video_path).stem
         print(f"\n{'='*40}")
         print(f">>> 开始处理视频: {video_title}")
@@ -64,7 +64,7 @@ def main():
             upload_success = False
             # 判断是否开启上传
             if config['bilibili'].get('enable_upload', False):
-                upload_success = upload_to_bilibili(output_video_path, b_title, b_desc, b_tags, source_url, uploader_id)
+                upload_success = upload_to_bilibili(output_video_path, b_title, b_desc, b_tags, source_url, uploader_id, cover_path)
             else:
                 print("[*] 配置文件设为不上传，将转入本地收藏。")
             
@@ -76,6 +76,7 @@ def main():
                 Path(srt_path).unlink(missing_ok=True)
                 Path(ass_path).unlink(missing_ok=True)
                 if desc_path: Path(desc_path).unlink(missing_ok=True)
+                if cover_path: Path(cover_path).unlink(missing_ok=True)
                 Path(output_video_path).unlink(missing_ok=True)
                 print("[*] 清理完成。")
             else:

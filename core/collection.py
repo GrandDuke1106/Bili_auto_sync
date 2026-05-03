@@ -55,14 +55,25 @@ class BiliCollectionManager:
         return None
 
     def get_video_info(self, aid):
-        """获取视频的 cid (单P视频通常只有一个cid)"""
-        r = self.session.get(
-            'https://api.bilibili.com/x/web-interface/view',
-            params={'aid': aid}, timeout=10
-        ).json()
-        if r.get('code') != 0:
-            raise Exception(f"获取视频信息失败: {r}")
-        return r['data']
+        """获取视频信息（带防崩溃和真实错误打印）"""
+        # 注意这里的 URL：带 vupre 前缀，这是目前创作中心编辑稿件时用的真实内部接口
+        url = 'https://member.bilibili.com/x/vupre/web/archive/view'
+        
+        r = self.session.get(url, params={'aid': aid}, timeout=10)
+        
+        try:
+            res_json = r.json()
+        except Exception:
+            #print(f"\n[!] B站接口未返回JSON数据，原始内容前500个字符如下:")
+            #print(r.text[:500])
+            #print("-" * 40)
+            raise Exception("接口返回了非JSON数据(可能是Cookie权限不足或被重定向)")
+            
+        if res_json.get('code') != 0:
+            raise Exception(f"获取视频信息失败: {res_json}")
+            
+        return res_json['data']
+        
 
     def add_to_season(self, section_id, aid, cid, title):
         """将稿件压入指定的合集分区"""
