@@ -97,7 +97,7 @@ def hardcode_subtitles(video_path, ass_path, output_video_path):
         "-vf", f"ass='{ass_path_str}':fontsdir='{fonts_dir_str}'", 
         "-c:v", "libx264",    
         "-preset", "fast",    
-        "-crf", "18",         
+        "-crf", "23",         
         "-c:a", "copy",       
         str(output_video_path)
     ]

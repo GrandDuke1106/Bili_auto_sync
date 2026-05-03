@@ -31,6 +31,16 @@ DEFAULT_CONFIG = {
         "delete_after_upload": True, 
         "tid": 122,          
         "tags": ["搬运", "熟肉", "YouTube"]
+        "bilibili": {
+        "enable_upload": False,
+        "delete_after_upload": True,
+        "tid": 122,
+        "tags": ["翻译", "AI翻译", "YouTube"],
+        # 新增：YouTube频道名到B站合集名的映射表
+        "collections": {
+            "SomeChannel": "默认搬运合集",
+            "MKBHD": "MKBHD官方中字"
+        }
     },
     "subtitle": {
         "fonts_dir": "configs/fonts",
