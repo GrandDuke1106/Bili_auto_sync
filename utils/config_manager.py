@@ -20,27 +20,21 @@ DEFAULT_CONFIG = {
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         ],
         "channels": [
-            "https://www.youtube.com/@SomeChannel"
+            "https://www.youtube.com/@ExampleChannel"
         ],
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "download_archive": "data/archive.txt",
         "max_downloads_per_run": 3  
     },
     "bilibili": {
-        "enable_upload": False, 
-        "delete_after_upload": True, 
-        "tid": 122,          
-        "tags": ["搬运", "熟肉", "YouTube"]
-        "bilibili": {
         "enable_upload": False,
         "delete_after_upload": True,
         "tid": 122,
-        "tags": ["翻译", "AI翻译", "YouTube"],
-        # 新增：YouTube频道名到B站合集名的映射表
+        "tags": ["翻译", "YouTube"],
         "collections": {
-            "SomeChannel": "默认搬运合集",
-            "MKBHD": "MKBHD官方中字"
-        }
+            "UCuAXFkgsw1L7xaCfnd5JJOw": "示例合集1",
+            "UCexample": "示例合集2"
+        },
     },
     "subtitle": {
         "fonts_dir": "configs/fonts",

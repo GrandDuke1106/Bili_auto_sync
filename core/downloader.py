@@ -60,7 +60,8 @@ def download_video():
             continue
             
         sub_file, desc_file = None, None
-        uploader = ""
+        uploader_id = ""   # 用于后台合集映射
+        uploader_name = "" # 用于前台标题展示
         source_url = ""
 
         # 解析 info.json 获取频道名
@@ -69,8 +70,8 @@ def download_video():
             try:
                 with open(info_file, 'r', encoding='utf-8') as f:
                     info_data = json.load(f)
-                    # 优先获取 uploader，如果没有则尝试获取 channel
-                    uploader = info_data.get('uploader', info_data.get('channel', ''))
+                    uploader_id = info_data.get('channel_id', '')
+                    uploader_name = info_data.get('channel', info_data.get('uploader', ''))
                     source_url = info_data.get('webpage_url', 'YouTube')
             except Exception as e:
                 print(f"[!] 读取频道元数据失败: {e}")
@@ -87,6 +88,6 @@ def download_video():
         if possible_desc:
             desc_file = str(possible_desc[0])
                 
-        downloaded_files.append((str(video_file), sub_file, desc_file, uploader, source_url))
+        downloaded_files.append((str(video_file), sub_file, desc_file, uploader_id, uploader_name, source_url))
 
     return downloaded_files

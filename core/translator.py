@@ -120,5 +120,5 @@ def generate_bilibili_meta(title, desc_path, sample_subs, uploader=""):
     except Exception as e:
         print(f"[!] 生成AI元数据失败 ({e})，使用默认格式...")
         # 失败时的降级处理也加上频道名
-        fallback_prefix = f"[熟肉][@{uploader}]" if uploader else "[熟肉]"
+        fallback_prefix = f"[熟肉][{uploader}]" if uploader else "[熟肉]"
         return f"{fallback_prefix}{title[:60]}", []

@@ -29,7 +29,7 @@ def main():
         return
 
     # 2. 遍历处理
-    for video_path, srt_path, desc_path, uploader, source_url in downloads: 
+    for video_path, srt_path, desc_path, uploader_id, uploader_name, source_url in downloads: 
         video_title = Path(video_path).stem
         print(f"\n{'='*40}")
         print(f">>> 开始处理视频: {video_title}")
@@ -48,7 +48,7 @@ def main():
             continue
 
         # 【新增】让 AI 生成 B 站专用标题、简介和 Tag
-        b_title, b_desc, b_tags = generate_bilibili_meta(video_title, desc_path, chinese_texts, uploader)
+        b_title, b_desc, b_tags = generate_bilibili_meta(video_title, desc_path, chinese_texts, uploader_name)
 
         # 生成 ASS 和压制
         ass_path = TEMP_DIR / f"{video_title}.ass"
@@ -61,7 +61,7 @@ def main():
             upload_success = False
             # 判断是否开启上传
             if config['bilibili'].get('enable_upload', False):
-                upload_success = upload_to_bilibili(output_video_path, b_title, b_desc, b_tags, source_url, uploader)
+                upload_success = upload_to_bilibili(output_video_path, b_title, b_desc, b_tags, source_url, uploader_id)
             else:
                 print("[*] 配置文件设为不上传，将转入本地收藏。")
             
