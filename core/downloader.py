@@ -40,12 +40,12 @@ def download_video():
         "--download-archive", str(ARCHIVE_FILE),
         "--write-info-json",
         "--ignore-errors",
-        "--max-downloads", max_dl,  # 限制最大下载数
+        "--max-downloads", max_dl,
         "--write-sub",
         "--write-auto-sub",
         "--sub-lang", "en",
         "--sub-format", "srt",
-        "--write-description",      # 【新增】下载 YouTube 原版简介
+        "--write-description",
         "-f", yt_format,
         "-o", f"{TEMP_DIR}/%(title)s.%(ext)s"
     ]
