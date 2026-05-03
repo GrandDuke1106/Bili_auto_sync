@@ -34,8 +34,11 @@ def main():
         print(f"\n{'='*40}")
         print(f">>> 开始处理视频: {video_title}")
         
-        if uploader: # 打印一下提取到的频道名
-            print(f"[*] 所属频道: {uploader}")
+        if uploader_id:
+            print(f"[*] 所属频道id: {uploader_id}")
+
+        if uploader_name:
+            print(f"[*] 所属频道: {uploader_name}")
 
         if not srt_path:
             print("[!] 未找到字幕，跳过。")

@@ -13,8 +13,8 @@ def download_video():
     config = load_config()
     yt_config = config.get('youtube', {})
     
-    urls = yt_config.get('target_urls', [])
-    channels = yt_config.get('channels', [])
+    urls = yt_config.get('target_urls') or []
+    channels = yt_config.get('channels') or []
     all_targets = [url for url in (urls + channels) if url.strip()]
     
     if not all_targets:
