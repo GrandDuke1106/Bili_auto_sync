@@ -79,7 +79,7 @@ def generate_bilibili_meta(title, desc_path, sample_subs, uploader_name="", uplo
     if desc_path:
         try:
             with open(desc_path, 'r', encoding='utf-8') as f:
-                desc_text = f.read()[:1000] # 只取前1000个字符防超长
+                desc_text = f.read()[:5000] # 只取前1000个字符防超长
         except Exception:
             pass
             

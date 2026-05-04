@@ -29,7 +29,8 @@ DEFAULT_CONFIG = {
     },
     "bilibili": {
         "enable_upload": False,
-        "delete_after_upload": True,
+        "delete_temp_files": True,
+        "delete_final_video": False,
         "tid": 122,
         "tags": ["翻译", "YouTube"],
         "collections": {
