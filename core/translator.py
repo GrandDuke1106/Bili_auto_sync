@@ -1,5 +1,6 @@
 # core/translator.py
 import pysrt
+import re
 import json
 from openai import OpenAI
 from utils.config_manager import load_config
@@ -8,43 +9,79 @@ def chunk_list(lst, n):
     for i in range(0, len(lst), n): yield lst[i:i + n]
 
 def optimize_srt(srt_path):
-    """修复 YouTube 自动生成字幕的时间轴重叠和碎片化断句"""
+    """终极修复：彻底重组 YouTube 破碎的自动字幕时间轴和断句"""
     if not srt_path: return
     subs = pysrt.open(srt_path)
     if not subs: return
     
-    # 1. 修复时间轴重叠 (将当前句的结束时间硬切到下一句的开始时间)
-    for i in range(len(subs) - 1):
-        if subs[i].end > subs[i+1].start:
-            subs[i].end = subs[i+1].start
-    
-    # 2. 智能合并破碎的短句
-    optimized_subs = pysrt.SubRipFile()
-    current_sub = None
-    
+    # 第一步：把所有破碎的字幕拼成一条时间连续的“长蛇”
+    merged_items = []
     for sub in subs:
-        text = sub.text.replace('\n', ' ').strip()
-        if not text: continue
-            
-        if current_sub is None:
-            current_sub = sub
-            current_sub.text = text
-        else:
-            # 如果当前积攒的句子长度小于 70 字符，且没有以句号等结束符结尾，继续向后合并
-            if len(current_sub.text) < 70 and not current_sub.text.endswith(('.', '?', '!', '"', '”')):
-                current_sub.text += " " + text
-                current_sub.end = sub.end  # 延长这段字幕的结束时间
-            else:
-                optimized_subs.append(current_sub)
-                current_sub = sub
-                current_sub.text = text
-                
-    if current_sub is not None:
-        optimized_subs.append(current_sub)
+        # 无情地删掉所有的换行符，用空格代替，并清理多余空格
+        clean_text = re.sub(r'\s+', ' ', sub.text.replace('\n', ' ')).strip()
+        if not clean_text: continue
         
-    # 重新编号并覆盖保存
-    for i, sub in enumerate(optimized_subs):
-        sub.index = i + 1
+        # 记录每一个碎片块的时间和文字
+        merged_items.append({
+            'start': sub.start.ordinal,
+            'end': sub.end.ordinal,
+            'text': clean_text
+        })
+        
+    # 第二步：基于标点符号，重新把这条“长蛇”切分成完美的语义句子
+    optimized_subs = pysrt.SubRipFile()
+    
+    current_sentence = ""
+    current_start = -1
+    current_end = -1
+    
+    for item in merged_items:
+        # 初始化句子的起始时间
+        if current_start == -1:
+            current_start = item['start']
+            
+        # 累加文字
+        if current_sentence:
+            current_sentence += " " + item['text']
+        else:
+            current_sentence = item['text']
+            
+        # 更新当前句子的结束时间为这个碎片的结束时间
+        current_end = item['end']
+        
+        # 核心判断：如果这句话遇到了结尾标点，或者实在太长了（比如没有标点瞎说了一通，强制 120 字符截断）
+        if re.search(r'[.?!]\s*$', current_sentence) or len(current_sentence) > 120:
+            # 建立一个全新的字幕块
+            new_sub = pysrt.SubRipItem(
+                index=len(optimized_subs) + 1,
+                start=pysrt.SubRipTime(milliseconds=current_start),
+                end=pysrt.SubRipTime(milliseconds=current_end),
+                text=current_sentence.strip()
+            )
+            optimized_subs.append(new_sub)
+            
+            # 清空缓存，准备迎接下一句话
+            current_sentence = ""
+            current_start = -1
+            
+    # 收尾：把最后可能还没遇到标点的话也加进去
+    if current_sentence:
+        new_sub = pysrt.SubRipItem(
+            index=len(optimized_subs) + 1,
+            start=pysrt.SubRipTime(milliseconds=current_start),
+            end=pysrt.SubRipTime(milliseconds=current_end),
+            text=current_sentence.strip()
+        )
+        optimized_subs.append(new_sub)
+        
+    # 第三步：消除由于重新切分导致的时间轴微小重叠
+    for i in range(len(optimized_subs) - 1):
+        if optimized_subs[i].end > optimized_subs[i+1].start:
+            # 各让一步，取中点
+            mid_time = (optimized_subs[i].end.ordinal + optimized_subs[i+1].start.ordinal) // 2
+            optimized_subs[i].end = pysrt.SubRipTime(milliseconds=mid_time)
+            optimized_subs[i+1].start = pysrt.SubRipTime(milliseconds=mid_time)
+
     optimized_subs.save(srt_path, encoding='utf-8')
 
 def translate_subtitles(srt_path, uploader_id=""):
@@ -66,7 +103,7 @@ def translate_subtitles(srt_path, uploader_id=""):
     subs = pysrt.open(srt_path)
     english_texts = [sub.text for sub in subs]
     chinese_texts = []
-    chunks = list(chunk_list(english_texts, 100))
+    chunks = list(chunk_list(english_texts, 20))
     print(f"[*] 开始翻译，使用模型: {model_name}...")
     
     for index, chunk in enumerate(chunks):
@@ -120,7 +157,7 @@ def generate_bilibili_meta(title, desc_path, sample_subs, uploader_name="", uplo
     if desc_path:
         try:
             with open(desc_path, 'r', encoding='utf-8') as f:
-                desc_text = f.read()[:5000] # 只取前1000个字符防超长
+                desc_text = f.read()[:5000]
         except Exception:
             pass
             

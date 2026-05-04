@@ -48,29 +48,31 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
 
     for i, sub in enumerate(subs_srt):
         if i < len(chinese_texts) and i < len(english_texts):
-            # 清理掉 AI 或原始字幕中可能带有的换行符，全部变成单行纯文本
-            zh_raw = chinese_texts[i].replace('\r', '').replace('\n', '')
-            en_raw = english_texts[i].replace('\r', '').replace('\n', ' ')
+            # 彻底清理掉 AI 或原始字幕中可能带有的真实换行符，全部变成单行纯文本
+            zh_raw = chinese_texts[i].replace('\r', '').replace('\n', '').strip()
+            en_raw = english_texts[i].replace('\r', '').replace('\n', ' ').strip()
 
-            # 智能换行：中文超过 25 个字符，尝试在中间偏后的逗号处切开
+            # 中文智能换行：超过 25 个字符，尝试在中间偏后的标点处切开
             zh = zh_raw
             if len(zh_raw) > 25:
-                split_idx = zh_raw.rfind('，', 0, 25)
+                # 寻找最后的逗号或句号
+                split_idx = max(zh_raw.rfind('，', 0, 25), zh_raw.rfind('。', 0, 25))
                 if split_idx != -1:
                     zh = zh_raw[:split_idx+1] + "\\N" + zh_raw[split_idx+1:]
                 else:
+                    # 如果真的一句长话没有标点，直接硬切一半
                     mid = len(zh_raw) // 2
                     zh = zh_raw[:mid] + "\\N" + zh_raw[mid:]
 
-            # 智能换行：英文按照 50 个字母的宽度进行安全的单词级自动折行
-            en_wrapped = textwrap.wrap(en_raw, width=50)
-            en = "\\N".join(en_wrapped)
+            # 英文智能换行：安全折行，最多允许两行
+            en_wrapped = textwrap.wrap(en_raw, width=60) 
+            en = "\\N".join(en_wrapped[:2])
 
             ass_text = f"{{\\rStyle_ZH}}{zh}\\N{{\\rStyle_EN}}{en}"
             event = pysubs2.SSAEvent(start=sub.start.ordinal, end=sub.end.ordinal, text=ass_text)
             subs_ass.append(event)
 
-    subs_ass.save(output_ass_path, encoding="utf-8")
+    subs_ass.save(str(output_ass_path), encoding="utf-8")
     print(f"[*] 双语 ASS 字幕生成完毕: {output_ass_path}")
 
 
@@ -82,7 +84,6 @@ def hardcode_subtitles(video_path, ass_path, output_video_path):
     configured_fonts_dir = config.get("subtitle", {}).get("fonts_dir", "configs/fonts")
     
     # 2. 将配置的路径转换为绝对路径
-    # 如果用户填的是绝对路径，Path 会直接使用；如果是相对路径，会拼在 BASE_DIR 后面
     fonts_base_dir = (BASE_DIR / configured_fonts_dir).resolve()
     
     # 3. 创建扁平化临时目录
