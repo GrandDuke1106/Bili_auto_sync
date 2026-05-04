@@ -108,9 +108,16 @@ def hardcode_subtitles(video_path, ass_path, output_video_path):
         "-y", 
         "-i", str(video_path),
         "-vf", f"ass='{ass_path_str}':fontsdir='{fonts_dir_str}'", 
-        "-c:v", "libx264",    
-        "-preset", "fast",    
-        "-crf", "18",         
+        #===cpu预设参数===
+        "-c:v", "libx264",    # 使用h264编码
+        "-preset", "fast",    # 编码速度
+        "-crf", "18",         # 画质质量
+        #===英伟达预设参数
+        # "-c:v", "h264_nvenc",   # 可以将 libx264 替换为 NVIDIA 硬件编码器
+        # "-preset", "p4",        # NVENC 专属预设 (p1-p7，p4 是速度和质量的最佳平衡点)
+        # "-cq", "18",            # NVENC 不直接支持 -crf 参数，使用 -cq (Constant Quality) 代替
+        # "-b:v", "0",            # 配合 -cq 使用，允许动态码率不受限
+        #===预设结束
         "-c:a", "copy",       
         str(output_video_path)
     ]

@@ -24,6 +24,8 @@ def download_video():
     yt_format = yt_config.get('format', 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best')
     max_dl = str(yt_config.get('max_downloads_per_run', 3))
     
+    yt_proxy = yt_config.get('proxy', '')
+
     TEMP_DIR.mkdir(parents=True, exist_ok=True)
     ARCHIVE_FILE.parent.mkdir(parents=True, exist_ok=True)
 
@@ -51,6 +53,9 @@ def download_video():
         "-f", yt_format,
         "-o", f"{TEMP_DIR}/%(title)s.%(ext)s"
     ]
+    if yt_proxy:
+        command.extend(["--proxy", yt_proxy])
+        print(f"[*] yt-dlp 已启用代理: {yt_proxy}")
     command.extend(all_targets)
 
     print(f"[*] 正在调用 yt-dlp，单次最多下载 {max_dl} 个新视频...")

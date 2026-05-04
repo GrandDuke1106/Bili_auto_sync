@@ -24,7 +24,8 @@ DEFAULT_CONFIG = {
         ],
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "download_archive": "data/archive.txt",
-        "max_downloads_per_run": 3  
+        "max_downloads_per_run": 3,
+        "proxy": "http://127.0.0.1:7890"
     },
     "bilibili": {
         "enable_upload": False,
