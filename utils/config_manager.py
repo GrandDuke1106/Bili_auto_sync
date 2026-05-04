@@ -20,7 +20,7 @@ DEFAULT_CONFIG = {
             "https://www.youtube.com/watch?v=dQw4w9WgXcQ"
         ],
         "channels": [
-            "https://www.youtube.com/@ExampleChannel"
+            "https://www.youtube.com/@ExampleChannel/videos"
         ],
         "format": "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
         "download_archive": "data/archive.txt",
