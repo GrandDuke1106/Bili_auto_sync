@@ -7,8 +7,49 @@ from utils.config_manager import load_config
 def chunk_list(lst, n):
     for i in range(0, len(lst), n): yield lst[i:i + n]
 
+def optimize_srt(srt_path):
+    """修复 YouTube 自动生成字幕的时间轴重叠和碎片化断句"""
+    if not srt_path: return
+    subs = pysrt.open(srt_path)
+    if not subs: return
+    
+    # 1. 修复时间轴重叠 (将当前句的结束时间硬切到下一句的开始时间)
+    for i in range(len(subs) - 1):
+        if subs[i].end > subs[i+1].start:
+            subs[i].end = subs[i+1].start
+    
+    # 2. 智能合并破碎的短句
+    optimized_subs = pysrt.SubRipFile()
+    current_sub = None
+    
+    for sub in subs:
+        text = sub.text.replace('\n', ' ').strip()
+        if not text: continue
+            
+        if current_sub is None:
+            current_sub = sub
+            current_sub.text = text
+        else:
+            # 如果当前积攒的句子长度小于 70 字符，且没有以句号等结束符结尾，继续向后合并
+            if len(current_sub.text) < 70 and not current_sub.text.endswith(('.', '?', '!', '"', '”')):
+                current_sub.text += " " + text
+                current_sub.end = sub.end  # 延长这段字幕的结束时间
+            else:
+                optimized_subs.append(current_sub)
+                current_sub = sub
+                current_sub.text = text
+                
+    if current_sub is not None:
+        optimized_subs.append(current_sub)
+        
+    # 重新编号并覆盖保存
+    for i, sub in enumerate(optimized_subs):
+        sub.index = i + 1
+    optimized_subs.save(srt_path, encoding='utf-8')
+
 def translate_subtitles(srt_path, uploader_id=""):
     if not srt_path: return [], []
+    optimize_srt(srt_path)
     config = load_config()
     api_key = config['deepseek']['api_key']
     base_url = config['deepseek']['base_url']

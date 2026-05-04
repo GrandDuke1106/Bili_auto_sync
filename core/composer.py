@@ -3,6 +3,7 @@ import os
 import subprocess
 import sys
 import shutil
+import textwrap
 from pathlib import Path
 import pysubs2
 import pysrt
@@ -47,20 +48,23 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
 
     for i, sub in enumerate(subs_srt):
         if i < len(chinese_texts) and i < len(english_texts):
-            zh_raw = chinese_texts[i].replace('\r', '')
-            en_raw = english_texts[i].replace('\r', '')
+            # 清理掉 AI 或原始字幕中可能带有的换行符，全部变成单行纯文本
+            zh_raw = chinese_texts[i].replace('\r', '').replace('\n', '')
+            en_raw = english_texts[i].replace('\r', '').replace('\n', ' ')
 
-            # 中文字数判断：如果小于等于 20 个字，直接删掉换行符；否则用 \N 换行
-            if len(zh_raw.replace('\n', '')) <= 20:
-                zh = zh_raw.replace('\n', '')
-            else:
-                zh = zh_raw.replace('\n', '\\N')
+            # 智能换行：中文超过 25 个字符，尝试在中间偏后的逗号处切开
+            zh = zh_raw
+            if len(zh_raw) > 25:
+                split_idx = zh_raw.rfind('，', 0, 25)
+                if split_idx != -1:
+                    zh = zh_raw[:split_idx+1] + "\\N" + zh_raw[split_idx+1:]
+                else:
+                    mid = len(zh_raw) // 2
+                    zh = zh_raw[:mid] + "\\N" + zh_raw[mid:]
 
-            # 英文字符判断：如果小于等于 50 个字母，将换行符替换为【空格】防粘连；否则用 \N 换行
-            if len(en_raw.replace('\n', '')) <= 50:
-                en = en_raw.replace('\n', ' ')
-            else:
-                en = en_raw.replace('\n', '\\N')
+            # 智能换行：英文按照 50 个字母的宽度进行安全的单词级自动折行
+            en_wrapped = textwrap.wrap(en_raw, width=50)
+            en = "\\N".join(en_wrapped)
 
             ass_text = f"{{\\rStyle_ZH}}{zh}\\N{{\\rStyle_EN}}{en}"
             event = pysubs2.SSAEvent(start=sub.start.ordinal, end=sub.end.ordinal, text=ass_text)
