@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from utils.config_manager import load_config
 from utils.logger import setup_logger
-from core.downloader import download_video, scan_downloaded_files, clean_temp_dir, convert_json3_subtitles
+from core.downloader import download_video, scan_downloaded_files, clean_temp_dir, convert_json3_subtitles, run_whisperx_on_videos
 from core.translator import translate_subtitles, generate_bilibili_meta
 from core.composer import generate_ass, hardcode_subtitles
 from core.publisher import upload_to_bilibili
@@ -160,6 +160,8 @@ def main():
         if json3_files and not srt_files:
             print("[*] 发现未转换的 json3 字幕，正在转换为 SRT...")
             convert_json3_subtitles()
+        # WhisperX：即使跳过下载，也可对已下载视频运行转录
+        run_whisperx_on_videos()
         downloads = scan_downloaded_files()
         if not downloads:
             print("[!] TEMP_DIR 中没有找到已下载的视频文件。")

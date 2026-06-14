@@ -129,6 +129,42 @@ translation:
       - IFR
 ```
 
+#### 🎙️ WhisperX 词级时间戳转录（可选，实验性）
+WhisperX 可以生成**词级毫秒精度**的时间戳，彻底解决 YouTube 自动字幕时间轴与语音不同步的问题。启用后，字幕中的每一句话都会精确对齐到说话人的发音时刻。
+
+> ⚠️ **硬件要求**：WhisperX 需要 **NVIDIA GPU + CUDA**，显存建议 ≥8GB（`large-v3` 模型约需 6GB）。CPU 模式极慢，不推荐用于长视频。
+
+> 📦 **安装**：`pip install whisperx`（建议先手动安装对应 CUDA 版本的 PyTorch）
+
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `enabled` | 是否启用 WhisperX 转录 | `false` |
+| `model` | Whisper 模型大小（`large-v3` / `medium` / `small`） | `large-v3` |
+| `device` | 推理设备（`cuda` 或 `cpu`） | `cuda` |
+| `compute_type` | 计算精度（`float16` / `float32` / `int8`） | `float16` |
+| `language` | 音频语言代码 | `en` |
+| `batch_size` | 批处理大小（减少可降低显存占用） | `16` |
+| `hf_endpoint` | HuggingFace 镜像站（国内推荐 `https://hf-mirror.com`） | `""` |
+| `hf_proxy` | HuggingFace 下载代理（如 `http://127.0.0.1:7897`） | `""` |
+| `hf_offline` | 离线模式，仅使用已缓存的模型（不联网） | `false` |
+
+```yaml
+whisperx:
+  enabled: true           # 启用 WhisperX
+  model: large-v3         # 最佳精度（需 ~6GB 显存）
+  device: cuda            # GPU 推理
+  compute_type: float16   # 半精度（节省显存）
+  language: en
+  batch_size: 16
+  hf_endpoint: https://hf-mirror.com   # 国内用户必填（否则模型无法下载）
+  # hf_proxy: http://127.0.0.1:7897    # 或使用代理替代镜像
+  # hf_offline: true                    # 已有缓存模型后可开启
+```
+
+> 💡 **工作流程**：启用后，yt-dlp 下载的 YouTube 自动字幕会被 WhisperX 生成的词级对齐字幕**完全替换**。后续的 AI 翻译和压制流程不受影响。如果 WhisperX 转录失败（如显存不足），程序会自动回退到 yt-dlp 自带字幕。
+
+> 📦 **模型缓存**：WhisperX 模型（约 4.2GB）首次下载后永久缓存于 `~/.cache/huggingface/hub/`，后续运行直接加载，无需重复下载。若已通过代理/镜像成功下载过一次，后续可设置 `hf_offline: true` 跳过网络检查。
+
 #### 🖋️ 字幕字体
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
@@ -150,7 +186,7 @@ translation:
 
 | 阶段 | 说明 | 输出 |
 |------|------|------|
-| `download` | yt-dlp 下载 YouTube 视频+字幕+封面+简介 | `.mp4`、`.srt`、`.description`、封面图 |
+| `download` | yt-dlp 下载 YouTube 视频+字幕+封面+简介（可选：WhisperX 词级对齐转录） | `.mp4`、`.srt`、`.description`、封面图 |
 | `translate` | DeepSeek AI 翻译字幕 + 生成 B 站标题/简介/Tag | 中文译文、B 站元数据 |
 | `compose` | 生成双语 ASS 字幕 + FFmpeg 硬字幕压制 | `_zh_sub.mp4` |
 | `upload` | 通过 biliup 上传至 B 站（可选，需开启 `enable_upload`） | B 站稿件 |
@@ -287,7 +323,7 @@ bilibili:
 
 * `configs/`：存放所有配置文件（`config.yaml`、`cookies.json`）、字体文件。
 * `core/`：核心功能模块。
-  * `downloader.py`：YouTube 视频下载（yt-dlp 封装）。
+  * `downloader.py`：YouTube 视频下载（yt-dlp 封装）+ WhisperX 词级时间戳转录（可选）。
   * `translator.py`：字幕优化 + DeepSeek AI 翻译 + B 站元数据生成。
   * `composer.py`：双语 ASS 字幕生成 + FFmpeg 硬字幕压制。
   * `publisher.py`：B 站上传（biliup 封装）+ 自动合集归类。

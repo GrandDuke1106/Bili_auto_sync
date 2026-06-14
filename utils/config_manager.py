@@ -88,6 +88,17 @@ DEFAULT_CONFIG = {
         "zh_font_name": "Noto Sans SC",
         "en_font_name": "Fira Code"
     },
+    "whisperx": {
+        "enabled": False,
+        "model": "large-v3",
+        "device": "cuda",
+        "compute_type": "float16",
+        "language": "en",
+        "batch_size": 16,
+        "hf_endpoint": "",
+        "hf_proxy": "",
+        "hf_offline": False
+    },
     "translation": {
         "preserve_proper_nouns": [],
         "channel_preserve_nouns": {}

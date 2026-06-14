@@ -194,8 +194,8 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
             zh_raw = chinese_texts[i].replace('\r', '').replace('\n', '').strip()
             en_raw = english_texts[i].replace('\r', '').replace('\n', ' ').strip()
 
-            # ── 中文智能换行：阈值提高到 40，确保绝大部分中文单行显示 ──
-            zh = _smart_line_break_chinese(zh_raw, max_line_width=40)
+            # ── 中文智能换行：阈值提高到 55，确保中文单行显示（1中+1英）──
+            zh = _smart_line_break_chinese(zh_raw, max_line_width=55)
 
             # ── 英文智能换行：宽度提高到 78，确保大部分英文单行显示 ──
             en_wrapped = textwrap.wrap(en_raw, width=78)

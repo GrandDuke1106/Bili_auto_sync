@@ -66,8 +66,82 @@ def _build_time_map(full_text, merged_items):
     return time_map
 
 
+def _rebalance_sentence_splits(sentences, max_len=100):
+    """修正糟糕的分割：将结尾是连接词/开头是残片的块合并回一起。
+
+    典型坏分割案例：
+      "so please keep" | "that in mind for the video"
+      → "so please keep that in mind for the video"
+
+      "like that this" | "is a pre-release build"
+      → "like that this is a pre-release build"
+    """
+    if len(sentences) <= 1:
+        return sentences
+
+    # 不应当作为句子结尾的短词（通常是连接词、代词开头等）
+    bad_endings = {
+        'this', 'that', 'these', 'those', 'so', 'and', 'but',
+        'or', 'nor', 'yet', 'for', 'please', 'although',
+        'though', 'because', 'if', 'when', 'where', 'which', 'who',
+        'what', 'how', 'why', 'while', 'whereas', 'unless', 'until',
+        'however', 'therefore', 'thus', 'hence', 'then', 'also',
+        'just', 'still', 'even', 'only', 'maybe', 'perhaps',
+        'keep', 'make', 'let', 'get', 'put',
+    }
+    # 不应当作为句子开头的极短残片（助动词、be 动词等）
+    bad_beginnings = {
+        'is', 'are', 'was', 'were', 'am', 'be', 'been',
+        'has', 'have', 'had', 'do', 'does', 'did',
+        'can', 'could', 'will', 'would', 'shall', 'should',
+        'may', 'might', 'must', 'it', 'them', 'us', 'me',
+        'him', 'her', 'to', 'of', 'in', 'on', 'at', 'by',
+    }
+
+    result = []
+    i = 0
+    while i < len(sentences):
+        current = sentences[i]
+        merged = False
+
+        if i + 1 < len(sentences):
+            next_sent = sentences[i + 1]
+            cur_words = current.split()
+            next_words = next_sent.split()
+
+            cur_last = cur_words[-1].lower().rstrip(',.;!?') if cur_words else ''
+            next_first = next_words[0].lower().rstrip(',.;!?') if next_words else ''
+
+            should_merge = False
+
+            # Case 1: 当前句子以连接词/代词结尾 → 合并
+            if cur_last in bad_endings:
+                should_merge = True
+            # Case 2: 下一句以残片开头 → 合并
+            elif next_first in bad_beginnings:
+                should_merge = True
+            # Case 3: 当前句子极短（孤儿碎片）→ 合并
+            elif len(current) < 15:
+                should_merge = True
+            # Case 4: 下一句极短 → 合并
+            elif len(next_sent) < 10:
+                should_merge = True
+
+            if should_merge and len(current) + len(next_sent) + 1 <= max_len:
+                result.append(current + ' ' + next_sent)
+                i += 2
+                merged = True
+
+        if not merged:
+            result.append(current)
+            i += 1
+
+    return result
+
+
 def _split_long_english_sentence(sentence, max_len=100):
-    """按从句连词或逗号对超长英文句子进行软分割（递归），保证不在单词中间切断"""
+    """按从句连词、逗号或语义边界对超长英文句子进行软分割（递归），
+    保证不在单词中间切断，并通过后处理修正不良分割。"""
     if len(sentence) <= max_len:
         return [sentence]
 
@@ -78,7 +152,7 @@ def _split_long_english_sentence(sentence, max_len=100):
 
     candidates = []  # (position, priority)
 
-    # 优先级 100：从句级连词 — ", and", ", but", ", because" 等
+    # ── 优先级 100：逗号 + 从句连词 — ", and", ", but", ", because" 等 ──
     clause_re = re.compile(
         r',\s+(?:and|but|because|which|who|so|or|yet|nor'
         r'|while|although|however|therefore|if|when|where'
@@ -90,26 +164,63 @@ def _split_long_english_sentence(sentence, max_len=100):
         if search_start <= pos <= search_end:
             candidates.append((pos, 100))
 
-    # 优先级 50：普通逗号
+    # ── 优先级 80：独立从句引导词（无需逗号）──
+    # YouTube ASR 文本通常缺少标点，这些词经常标志新从句的开始
+    # 限制：前后都需要 ≥12 个字符，防止把 "and" / "so" 在短语内部误切
+    standalone_re = re.compile(
+        r'\s+(so|and|but|because|if|although|which|who|where'
+        r'|when|however|therefore|thus|hence|unless|until'
+        r'|though|while|whereas|yet|or|nor)\s+',
+        re.IGNORECASE
+    )
+    if not candidates:
+        for m in standalone_re.finditer(sentence):
+            pos = m.start() + 1  # 在连词之前切开
+            if search_start <= pos <= search_end:
+                left_len = pos
+                right_len = len(sentence) - (m.end() - 1)
+                # 两侧都要有足够内容，避免孤立短词
+                if left_len >= 15 and right_len >= 15:
+                    candidates.append((pos, 80))
+
+    # ── 优先级 50：普通逗号 ──
     if not candidates:
         for m in re.finditer(r',\s+', sentence):
             pos = m.start() + 1
             if search_start <= pos <= search_end:
                 candidates.append((pos, 50))
 
-    # 优先级 40：分号
+    # ── 优先级 40：分号 ──
     if not candidates:
         for m in re.finditer(r';\s+', sentence):
             pos = m.start() + 1
             if search_start <= pos <= search_end:
                 candidates.append((pos, 40))
 
-    # 优先级 20：空格（保证在单词边界切断）
+    # ── 优先级 20：空格（带智能约束，防止切断紧耦合短词）──
     if not candidates:
+        # 极短词（≤3 字符）很可能与相邻词紧耦合，不应在其前/后切断
+        SHORT_WORD_MAX = 3
+        MIN_HALF = 15  # 每半句最少字符数
         for m in re.finditer(r'\s+', sentence):
             pos = m.start()
             if search_start <= pos <= search_end:
-                candidates.append((pos, 20))
+                # 检查下一词是否过短（如 "is", "a", "the", "it", "to" →
+                # 切断后下一句变成 "is xxx" 很别扭）
+                next_word_m = re.search(r'\S+', sentence[pos + 1:])
+                next_word_len = len(next_word_m.group()) if next_word_m else 99
+                if next_word_len <= SHORT_WORD_MAX:
+                    continue
+
+                # 检查上一词是否过短（切断后上一句以 "this"/"keep" 结尾）
+                prev_text = sentence[:pos]
+                prev_word_m = re.search(r'(\S+)\s*$', prev_text)
+                prev_word_len = len(prev_word_m.group(1)) if prev_word_m else 99
+                if prev_word_len <= SHORT_WORD_MAX:
+                    continue
+
+                if pos >= MIN_HALF and len(sentence) - pos - 1 >= MIN_HALF:
+                    candidates.append((pos, 20))
 
     if not candidates:
         return [sentence]  # 无法分割，保持原样
@@ -128,6 +239,9 @@ def _split_long_english_sentence(sentence, max_len=100):
     result = []
     result.extend(_split_long_english_sentence(left, max_len))
     result.extend(_split_long_english_sentence(right, max_len))
+
+    # ── 后处理：修正递归分割产生的不良断点 ──
+    result = _rebalance_sentence_splits(result, max_len)
     return result
 
 
@@ -211,11 +325,25 @@ def optimize_srt(srt_path):
         # NLTK 句子分割（仅在段落内部）
         raw_sentences = _smart_sentence_tokenize(seg_text)
 
-        # 逐句分配时间轴
-        search_pos = 0
+        # ── 收集段落内所有句子（含超长句子的子分割）──
+        all_sentences = []
         for sentence in raw_sentences:
             sentence = sentence.strip()
             if not sentence:
+                continue
+            if len(sentence) <= 100:
+                all_sentences.append(sentence)
+            else:
+                all_sentences.extend(_split_long_english_sentence(sentence))
+
+        # ── 段落级后处理：修正跨句子边界的不良分割 ──
+        # （例如 NLTK 的 "this is..." → 子分割 "so please keep" | "that in mind"）
+        all_sentences = _rebalance_sentence_splits(all_sentences, max_len=110)
+
+        # ── 逐句分配时间轴 ──
+        search_pos = 0
+        for sentence in all_sentences:
+            if not sentence.strip():
                 continue
 
             pos = seg_text.find(sentence, search_pos)
@@ -229,37 +357,13 @@ def optimize_srt(srt_path):
             if end_ms <= start_ms:
                 end_ms = start_ms + 500
 
-            if len(sentence) <= 100:
-                new_sub = pysrt.SubRipItem(
-                    index=len(optimized_subs) + 1,
-                    start=pysrt.SubRipTime(milliseconds=start_ms),
-                    end=pysrt.SubRipTime(milliseconds=end_ms),
-                    text=sentence,
-                )
-                optimized_subs.append(new_sub)
-            else:
-                sub_sentences = _split_long_english_sentence(sentence)
-                total_chars = sum(len(s) for s in sub_sentences)
-                if total_chars == 0:
-                    continue
-
-                duration = end_ms - start_ms
-                char_cursor = 0
-
-                for sub_sent in sub_sentences:
-                    sub_len = len(sub_sent)
-                    proportion = sub_len / total_chars
-                    sub_start = start_ms + int(char_cursor / total_chars * duration)
-                    sub_end = sub_start + max(int(proportion * duration), 300)
-
-                    new_sub = pysrt.SubRipItem(
-                        index=len(optimized_subs) + 1,
-                        start=pysrt.SubRipTime(milliseconds=sub_start),
-                        end=pysrt.SubRipTime(milliseconds=sub_end),
-                        text=sub_sent.strip(),
-                    )
-                    optimized_subs.append(new_sub)
-                    char_cursor += sub_len
+            new_sub = pysrt.SubRipItem(
+                index=len(optimized_subs) + 1,
+                start=pysrt.SubRipTime(milliseconds=start_ms),
+                end=pysrt.SubRipTime(milliseconds=end_ms),
+                text=sentence,
+            )
+            optimized_subs.append(new_sub)
 
     # ── 第三步：消除时间轴微小重叠 ──
     for i in range(len(optimized_subs) - 1):

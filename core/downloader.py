@@ -11,6 +11,20 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 TEMP_DIR = BASE_DIR / "data" / "temp_workspace"
 ARCHIVE_FILE = BASE_DIR / "data" / "archive.txt"
 
+# ── WhisperX 惰性导入 ──
+_whisperx_available = None
+
+def _check_whisperx():
+    """检查 WhisperX 是否已安装"""
+    global _whisperx_available
+    if _whisperx_available is None:
+        try:
+            import whisperx
+            _whisperx_available = True
+        except ImportError:
+            _whisperx_available = False
+    return _whisperx_available
+
 
 def clean_temp_dir():
     """清理临时工作目录中所有文件（保留 .gitkeep）"""
@@ -193,8 +207,202 @@ def convert_json3_subtitles():
             print(f"    [!] 转换 {json3_path.name} 失败: {e}")
 
 
+def _whisperx_segments_to_srt(segments, srt_path):
+    """将 WhisperX 的 segments 输出（含词级时间戳）转换为 SRT 文件。
+
+    每个 segment 作为一个字幕条目，使用第一个词的 start 和最后一个词的 end
+    作为精确时间轴，确保时间对齐到词级。
+    """
+    subs = pysrt.SubRipFile()
+    for seg in segments:
+        text = seg.get('text', '').strip()
+        if not text:
+            continue
+
+        words = seg.get('words', [])
+        if words:
+            # 词级精度：第一个词的开始 → 最后一个词的结束
+            start_ms = int(words[0].get('start', seg['start']) * 1000)
+            end_ms = int(words[-1].get('end', seg['end']) * 1000)
+        else:
+            # 回退到段级时间戳
+            start_ms = int(seg['start'] * 1000)
+            end_ms = int(seg['end'] * 1000)
+
+        if end_ms <= start_ms:
+            end_ms = start_ms + 500
+
+        # 清理文本
+        text = re.sub(r'\s+', ' ', text).strip()
+
+        sub = pysrt.SubRipItem(
+            index=len(subs) + 1,
+            start=pysrt.SubRipTime(milliseconds=start_ms),
+            end=pysrt.SubRipTime(milliseconds=end_ms),
+            text=text,
+        )
+        subs.append(sub)
+
+    subs.save(str(srt_path), encoding='utf-8')
+    return str(srt_path)
+
+
+def run_whisperx_on_videos():
+    """
+    对 TEMP_DIR 中所有已下载视频使用 WhisperX 进行词级时间戳转录。
+
+    仅在配置中启用且 WhisperX 已安装时执行。生成的 SRT 会替换
+    yt-dlp 下载的原始字幕，提供毫秒级精确的时间轴对齐。
+
+    模型缓存：WhisperX 模型首次下载后永久缓存在 ~/.cache/huggingface/hub/，
+    后续运行不会重复下载。国内用户需设置 hf_endpoint 镜像或 hf_proxy 代理。
+    """
+    import os
+
+    config = load_config()
+    wx_config = config.get('whisperx', {})
+    if not wx_config.get('enabled', False):
+        return
+
+    if not _check_whisperx():
+        print("[!] WhisperX 未安装，无法使用词级时间戳转录。")
+        print("[*] 安装方法: pip install whisperx")
+        print("[*] 将回退使用 yt-dlp 自带字幕。")
+        return
+
+    # ── 在 import whisperx 之前设置 HuggingFace Hub 环境变量 ──
+    # 关键：huggingface_hub 在 import 时读取环境变量，必须提前设置
+    hf_endpoint = wx_config.get('hf_endpoint', '')
+    hf_proxy = wx_config.get('hf_proxy', '')
+    hf_offline = wx_config.get('hf_offline', False)
+
+    if hf_endpoint:
+        os.environ['HF_ENDPOINT'] = hf_endpoint
+        print(f"[*] HuggingFace 镜像: {hf_endpoint}")
+    if hf_proxy:
+        os.environ['HTTPS_PROXY'] = hf_proxy
+        os.environ['HTTP_PROXY'] = hf_proxy
+        print(f"[*] HuggingFace 代理: {hf_proxy}")
+    if hf_offline:
+        os.environ['HF_HUB_OFFLINE'] = '1'
+        print(f"[*] HuggingFace 离线模式（仅使用本地缓存）")
+
+    import whisperx
+
+    model_name = wx_config.get('model', 'large-v3')
+    device = wx_config.get('device', 'cuda')
+    compute_type = wx_config.get('compute_type', 'float16')
+    language = wx_config.get('language', 'en')
+    batch_size = wx_config.get('batch_size', 16)
+
+    video_files = [
+        f for f in TEMP_DIR.glob("*.mp4")
+        if "_zh_sub" not in f.name
+    ]
+    if not video_files:
+        return
+
+    print(f"\n[*] WhisperX 词级时间戳转录已启用 (模型: {model_name}, 设备: {device})")
+    print(f"[*] 共 {len(video_files)} 个视频待处理...")
+
+    # 加载模型（所有视频共用，避免重复加载）
+    try:
+        print(f"[*] 正在加载 WhisperX 模型 '{model_name}'（首次下载约需 4.2GB，缓存后无需重复）...")
+        model = whisperx.load_model(model_name, device, compute_type=compute_type)
+        model_a, align_metadata = whisperx.load_align_model(
+            language_code=language, device=device
+        )
+        print(f"[*] WhisperX 模型加载完成")
+    except Exception as e:
+        print(f"[!] WhisperX 模型加载失败: {e}")
+        if not hf_endpoint and not hf_proxy and not hf_offline:
+            print("[*] 提示：国内服务器需要配置 HuggingFace 镜像或代理才能下载模型：")
+            print("    whisperx:")
+            print("      hf_endpoint: https://hf-mirror.com   # 国内镜像（推荐）")
+            print("      hf_proxy: http://127.0.0.1:7897       # 或使用代理")
+            print("[*] 模型只需下载一次，缓存于 ~/.cache/huggingface/hub/")
+        print("[*] 将回退使用 yt-dlp 自带字幕。")
+        return
+
+    for video_path in video_files:
+        video_stem = video_path.stem
+        print(f"\n  - 转录: {video_stem}")
+
+        # 检查是否已有 WhisperX 生成的 SRT（避免重复转录）
+        whisperx_srt = TEMP_DIR / f"{video_stem}.whisperx.srt"
+        if whisperx_srt.exists():
+            print(f"    [*] 已有 WhisperX SRT，跳过")
+            continue
+
+        audio_path = TEMP_DIR / f"{video_stem}_audio.wav"
+
+        try:
+            # 1. 提取音频 (16kHz mono WAV)
+            print(f"    [*] 提取音频...")
+            ffmpeg_cmd = [
+                'ffmpeg', '-y', '-i', str(video_path),
+                '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1',
+                str(audio_path)
+            ]
+            result = subprocess.run(ffmpeg_cmd, capture_output=True, text=True)
+            if result.returncode != 0:
+                print(f"    [!] 音频提取失败: {result.stderr[:200]}")
+                continue
+
+            # 2. WhisperX 转录
+            print(f"    [*] WhisperX 转录中...")
+            audio = whisperx.load_audio(str(audio_path))
+            transcribe_result = model.transcribe(
+                audio, batch_size=batch_size, language=language
+            )
+
+            # 3. 词级对齐
+            print(f"    [*] 词级时间戳对齐...")
+            aligned = whisperx.align(
+                transcribe_result["segments"],
+                model_a, align_metadata,
+                audio, device,
+                return_char_alignments=False,
+            )
+
+            # 4. 转换为 SRT
+            srt_target = TEMP_DIR / f"{video_stem}.srt"
+            _whisperx_segments_to_srt(aligned["segments"], srt_target)
+            print(f"    [✓] WhisperX SRT 已生成: {srt_target.name} "
+                  f"({len(aligned['segments'])} 段)")
+
+            # 清理旧字幕文件（yt-dlp 生成的）
+            for old_srt in TEMP_DIR.glob(f"{video_stem}*.en.srt"):
+                old_srt.unlink()
+                print(f"    [*] 已清理旧字幕: {old_srt.name}")
+
+        except Exception as e:
+            print(f"    [!] WhisperX 转录失败: {e}")
+            print(f"    [*] 将回退使用 yt-dlp 自带字幕（如存在）")
+
+        finally:
+            # 清理临时音频
+            if audio_path.exists():
+                audio_path.unlink()
+
+    # 清理 WhisperX 模型释放 GPU 显存
+    del model
+    del model_a
+    try:
+        import gc
+        gc.collect()
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+    print(f"\n[*] WhisperX 转录阶段完成")
+
+
 def download_video():
-    """运行 yt-dlp 下载 → 转换 json3 字幕 → 扫描结果"""
+    """运行 yt-dlp 下载 → 转换 json3 字幕 → WhisperX 转录(可选) → 扫描结果"""
     run_yt_dlp()
     convert_json3_subtitles()
+    run_whisperx_on_videos()  # 如果配置启用，会替换 SRT 为词级时间戳版本
     return scan_downloaded_files()

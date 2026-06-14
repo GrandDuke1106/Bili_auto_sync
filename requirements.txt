@@ -6,3 +6,7 @@ yt-dlp
 biliup
 nltk>=3.9
 jieba>=0.42
+# ── 可选：WhisperX 词级时间戳转录（需要 GPU + CUDA）──
+# 安装方法: pip install whisperx
+# 注意: whisperx 会自动安装 torch/torchaudio，建议先手动安装对应 CUDA 版本的 torch
+# whisperx
