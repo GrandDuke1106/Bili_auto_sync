@@ -2,7 +2,9 @@
 import subprocess
 import shutil
 import json
+import re
 from pathlib import Path
+import pysrt
 from utils.config_manager import load_config
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -56,7 +58,7 @@ def run_yt_dlp():
         "--write-sub",
         "--write-auto-sub",
         "--sub-lang", "en",
-        "--sub-format", "srt",
+        "--sub-format", "json3",
         "--write-description",
         "-f", yt_format,
         "-o", f"{TEMP_DIR}/%(title)s.%(ext)s"
@@ -126,7 +128,73 @@ def scan_downloaded_files():
     return downloaded_files
 
 
+def convert_json3_subtitles():
+    """
+    将 TEMP_DIR 中所有 .json3 字幕转换为 .srt，保留逐词级精确时间轴。
+    
+    YouTube 的 json3 格式有词级毫秒精度，而 yt-dlp 自带的 srt 转换会把
+    时间间隔很远的词错误地压入同一条目。此函数绕过该 bug。
+    """
+    json3_files = list(TEMP_DIR.glob("*.json3"))
+    if not json3_files:
+        return
+
+    print(f"[*] 发现 {len(json3_files)} 个 json3 字幕文件，开始转换为 SRT...")
+
+    for json3_path in json3_files:
+        try:
+            with open(json3_path, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+
+            events = data.get('events', [])
+            if not events:
+                print(f"    - {json3_path.name}: 无字幕事件，跳过")
+                continue
+
+            subs = pysrt.SubRipFile()
+            for ev in events:
+                segs = ev.get('segs', [])
+                if not segs:
+                    continue
+
+                # 拼接 segs 文本
+                text = ''.join(s.get('utf8', '') for s in segs).strip()
+                if not text:
+                    continue
+
+                # 移除 YouTube ASR 噪声标签：\n[Music]\n, \n[Applause]\n 等
+                text = re.sub(r'\s*\[Music\]\s*', ' ', text)
+                text = re.sub(r'\s*\[Applause\]\s*', ' ', text)
+                text = re.sub(r'\s+', ' ', text).strip()
+                if not text:
+                    continue
+
+                t_start = ev.get('tStartMs', 0)
+                t_dur = ev.get('dDurationMs', 0)
+                t_end = t_start + t_dur
+
+                sub = pysrt.SubRipItem(
+                    index=len(subs) + 1,
+                    start=pysrt.SubRipTime(milliseconds=t_start),
+                    end=pysrt.SubRipTime(milliseconds=t_end),
+                    text=text,
+                )
+                subs.append(sub)
+
+            # 输出为同名 .srt
+            srt_path = json3_path.with_suffix('.srt')
+            subs.save(str(srt_path), encoding='utf-8')
+            print(f"    - {json3_path.name} → {srt_path.name} ({len(subs)} 条)")
+
+            # 删除原始 json3，保持 TEMP_DIR 整洁
+            json3_path.unlink()
+
+        except Exception as e:
+            print(f"    [!] 转换 {json3_path.name} 失败: {e}")
+
+
 def download_video():
-    """运行 yt-dlp 下载 → 扫描结果（兼容旧接口，不再自动清理）"""
+    """运行 yt-dlp 下载 → 转换 json3 字幕 → 扫描结果"""
     run_yt_dlp()
+    convert_json3_subtitles()
     return scan_downloaded_files()

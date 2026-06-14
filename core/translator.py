@@ -146,7 +146,12 @@ def _smart_sentence_tokenize(full_text):
 
 
 def optimize_srt(srt_path):
-    """使用 NLTK 句子分割 + 从句级软断句 + 等比时间轴重组"""
+    """使用 NLTK 句子分割 + 从句级软断句 + 等比时间轴重组
+    
+    关键改进：检测相邻碎片之间的时间间隔（gap），若超过阈值则强制断开，
+    防止说话人长时间停顿后，不同段落的文字被错误合并到同一条字幕中。
+    """
+    GAP_THRESHOLD_MS = 2000  # 相邻条目间隔超过 2 秒视为独立段落
 
     if not srt_path:
         return
@@ -158,6 +163,10 @@ def optimize_srt(srt_path):
     merged_items = []
     for sub in subs:
         clean_text = re.sub(r'\s+', ' ', sub.text.replace('\n', ' ')).strip()
+        # 清理 YouTube ASR 噪声标签（防御性，json3 转换时已做但旧 SRT 可能残留）
+        clean_text = re.sub(r'\s*\[Music\]\s*', ' ', clean_text)
+        clean_text = re.sub(r'\s*\[Applause\]\s*', ' ', clean_text)
+        clean_text = re.sub(r'\s+', ' ', clean_text).strip()
         if not clean_text:
             continue
         merged_items.append({
@@ -169,81 +178,90 @@ def optimize_srt(srt_path):
     if not merged_items:
         return
 
-    # 拼接完整文本（条目之间用一个空格分隔）
-    full_text_parts = []
-    for item in merged_items:
-        full_text_parts.append(item['text'])
-    full_text = ' '.join(full_text_parts)
+    # ── 第一步半：按时间间隔切分为独立段落 ──
+    # 关键：检测相邻条目间的大间隔（如说话人长时间停顿、音乐片段等），
+    # 在间隔处强制断开，防止 9s 的 "so" 和 27s 的 "hello..." 被合并。
+    segments = []       # 每段是一个 [items] 列表
+    current_segment = [merged_items[0]]
 
-    # 建立 字符位置 → 时间(ms) 映射
-    time_map = _build_time_map(full_text, merged_items)
-    text_len = len(full_text)
-
-    if text_len == 0:
-        return
-
-    # ── 第二步：NLTK 句子分割 ──
-    raw_sentences = _smart_sentence_tokenize(full_text)
-
-    # ── 第三步：逐句分配时间轴 ──
-    optimized_subs = pysrt.SubRipFile()
-    search_pos = 0  # 在 full_text 中顺序定位，处理重复句子
-
-    for sentence in raw_sentences:
-        sentence = sentence.strip()
-        if not sentence:
-            continue
-
-        # 在 full_text 中定位当前句子
-        pos = full_text.find(sentence, search_pos)
-        if pos == -1:
-            continue
-        sent_end = pos + len(sentence)
-        search_pos = sent_end  # 下一句从此之后搜索
-
-        # 从时间映射表取首尾毫秒
-        start_ms = time_map[min(pos, text_len - 1)]
-        end_ms = time_map[min(sent_end - 1, text_len - 1)]
-        if end_ms <= start_ms:
-            end_ms = start_ms + 500  # 最小持续 0.5 秒
-
-        # 判断是否需要从句级软分割
-        if len(sentence) <= 100:
-            # 长度适中，直接使用
-            new_sub = pysrt.SubRipItem(
-                index=len(optimized_subs) + 1,
-                start=pysrt.SubRipTime(milliseconds=start_ms),
-                end=pysrt.SubRipTime(milliseconds=end_ms),
-                text=sentence,
-            )
-            optimized_subs.append(new_sub)
+    for i in range(1, len(merged_items)):
+        gap = merged_items[i]['start'] - merged_items[i - 1]['end']
+        if gap > GAP_THRESHOLD_MS:
+            segments.append(current_segment)
+            current_segment = [merged_items[i]]
         else:
-            # 超长句 → 从句连词/逗号软分割 + 等比时间分配
-            sub_sentences = _split_long_english_sentence(sentence)
-            total_chars = sum(len(s) for s in sub_sentences)
-            if total_chars == 0:
+            current_segment.append(merged_items[i])
+    segments.append(current_segment)  # 最后一段
+
+    # ── 第二步：逐段处理（每段独立做 NLTK 句子分割 + 时间重分配）──
+    optimized_subs = pysrt.SubRipFile()
+
+    for seg_items in segments:
+        # 拼接段落文本
+        seg_text = ' '.join(item['text'] for item in seg_items)
+        if not seg_text.strip():
+            continue
+
+        # 建立段落内的 字符位置 → 时间(ms) 映射
+        time_map = _build_time_map(seg_text, seg_items)
+        text_len = len(seg_text)
+        if text_len == 0:
+            continue
+
+        # NLTK 句子分割（仅在段落内部）
+        raw_sentences = _smart_sentence_tokenize(seg_text)
+
+        # 逐句分配时间轴
+        search_pos = 0
+        for sentence in raw_sentences:
+            sentence = sentence.strip()
+            if not sentence:
                 continue
 
-            duration = end_ms - start_ms
-            char_cursor = 0
+            pos = seg_text.find(sentence, search_pos)
+            if pos == -1:
+                continue
+            sent_end = pos + len(sentence)
+            search_pos = sent_end
 
-            for sub_sent in sub_sentences:
-                sub_len = len(sub_sent)
-                # 按字符数等比例分配时间
-                proportion = sub_len / total_chars
-                sub_start = start_ms + int(char_cursor / total_chars * duration)
-                sub_end = sub_start + max(int(proportion * duration), 300)
+            start_ms = time_map[min(pos, text_len - 1)]
+            end_ms = time_map[min(sent_end - 1, text_len - 1)]
+            if end_ms <= start_ms:
+                end_ms = start_ms + 500
 
+            if len(sentence) <= 100:
                 new_sub = pysrt.SubRipItem(
                     index=len(optimized_subs) + 1,
-                    start=pysrt.SubRipTime(milliseconds=sub_start),
-                    end=pysrt.SubRipTime(milliseconds=sub_end),
-                    text=sub_sent.strip(),
+                    start=pysrt.SubRipTime(milliseconds=start_ms),
+                    end=pysrt.SubRipTime(milliseconds=end_ms),
+                    text=sentence,
                 )
                 optimized_subs.append(new_sub)
-                char_cursor += sub_len
+            else:
+                sub_sentences = _split_long_english_sentence(sentence)
+                total_chars = sum(len(s) for s in sub_sentences)
+                if total_chars == 0:
+                    continue
 
-    # ── 第四步：消除时间轴微小重叠 ──
+                duration = end_ms - start_ms
+                char_cursor = 0
+
+                for sub_sent in sub_sentences:
+                    sub_len = len(sub_sent)
+                    proportion = sub_len / total_chars
+                    sub_start = start_ms + int(char_cursor / total_chars * duration)
+                    sub_end = sub_start + max(int(proportion * duration), 300)
+
+                    new_sub = pysrt.SubRipItem(
+                        index=len(optimized_subs) + 1,
+                        start=pysrt.SubRipTime(milliseconds=sub_start),
+                        end=pysrt.SubRipTime(milliseconds=sub_end),
+                        text=sub_sent.strip(),
+                    )
+                    optimized_subs.append(new_sub)
+                    char_cursor += sub_len
+
+    # ── 第三步：消除时间轴微小重叠 ──
     for i in range(len(optimized_subs) - 1):
         if optimized_subs[i].end > optimized_subs[i + 1].start:
             mid_time = (
@@ -252,7 +270,7 @@ def optimize_srt(srt_path):
             optimized_subs[i].end = pysrt.SubRipTime(milliseconds=mid_time)
             optimized_subs[i + 1].start = pysrt.SubRipTime(milliseconds=mid_time)
 
-    # ── 第五步：消除过短字幕（闪屏字幕），合并到相邻条目 ──
+    # ── 第四步：消除过短字幕（闪屏字幕），合并到相邻条目 ──
     MIN_DURATION_MS = 800  # 最短显示时长（毫秒）
 
     merged_subs = []

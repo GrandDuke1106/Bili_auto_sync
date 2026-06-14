@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from utils.config_manager import load_config
 from utils.logger import setup_logger
-from core.downloader import download_video, scan_downloaded_files, clean_temp_dir
+from core.downloader import download_video, scan_downloaded_files, clean_temp_dir, convert_json3_subtitles
 from core.translator import translate_subtitles, generate_bilibili_meta
 from core.composer import generate_ass, hardcode_subtitles
 from core.publisher import upload_to_bilibili
@@ -154,6 +154,12 @@ def main():
         downloads = download_video()  # 运行 yt-dlp + 扫描结果
     else:
         print(f"\n>>> [阶段 1/3] 跳过下载（start_from={start_from}），扫描已有文件...")
+        # 兜底：如果有残留 .json3 但无 .srt，先转换
+        json3_files = list(TEMP_DIR.glob("*.json3"))
+        srt_files = list(TEMP_DIR.glob("*.srt"))
+        if json3_files and not srt_files:
+            print("[*] 发现未转换的 json3 字幕，正在转换为 SRT...")
+            convert_json3_subtitles()
         downloads = scan_downloaded_files()
         if not downloads:
             print("[!] TEMP_DIR 中没有找到已下载的视频文件。")
