@@ -3,10 +3,12 @@ import os
 import shutil
 import json
 import re
+import argparse
+import sys
 from pathlib import Path
 from utils.config_manager import load_config
 from utils.logger import setup_logger
-from core.downloader import download_video
+from core.downloader import download_video, scan_downloaded_files, clean_temp_dir
 from core.translator import translate_subtitles, generate_bilibili_meta
 from core.composer import generate_ass, hardcode_subtitles
 from core.publisher import upload_to_bilibili
@@ -15,29 +17,35 @@ BASE_DIR = Path(__file__).resolve().parent
 TEMP_DIR = BASE_DIR / "data" / "temp_workspace"
 COMPLETED_DIR = BASE_DIR / "data" / "completed_videos"
 
+# ── 管道阶段常量 ──
+STAGE_ORDER = {"download": 1, "translate": 2, "compose": 3}
+VALID_STAGES = list(STAGE_ORDER.keys())
+
+
 def sanitize_filename(name):
     """清理文件名中的非法字符，防止因特殊符号导致中文名保存失败"""
     return re.sub(r'[\\/*?:"<>|]', "", name)
+
 
 def remove_from_archive(video_title):
     """如果处理彻底失败，从 yt-dlp 的 archive 中删除记录，以便下次重新下载"""
     info_file = TEMP_DIR / f"{video_title}.info.json"
     archive_path = BASE_DIR / "data" / "archive.txt"
-    
+
     if not info_file.exists() or not archive_path.exists():
         return
-        
+
     try:
         with open(info_file, 'r', encoding='utf-8') as f:
             info_data = json.load(f)
             video_id = info_data.get('id')
-            
+
         if not video_id:
             return
-            
+
         with open(archive_path, 'r', encoding='utf-8') as f:
             lines = f.readlines()
-            
+
         with open(archive_path, 'w', encoding='utf-8') as f:
             removed = False
             for line in lines:
@@ -45,118 +53,241 @@ def remove_from_archive(video_title):
                     f.write(line)
                 else:
                     removed = True
-            
+
         if removed:
-            print(f"[*] 连续重试失败，已将视频 [{video_id}] 从 archive 记录中移除，下次触发时将重新下载。")
+            print(f"[*] 已将视频 [{video_id}] 从 archive 记录中移除，下次触发时将重新下载。")
     except Exception as e:
         print(f"[!] 清除 archive 记录时发生错误: {e}")
+
+
+def save_pipeline_state(state_path, chinese_texts, english_texts, b_title, b_desc, b_tags):
+    """将翻译阶段的结果持久化到 JSON 文件，供后续 compose 阶段复用"""
+    state = {
+        "chinese_texts": chinese_texts,
+        "english_texts": english_texts,
+        "b_title": b_title,
+        "b_desc": b_desc,
+        "b_tags": b_tags,
+    }
+    try:
+        with open(state_path, 'w', encoding='utf-8') as f:
+            json.dump(state, f, ensure_ascii=False, indent=2)
+        print(f"[*] 管道状态已保存: {state_path.name}")
+    except Exception as e:
+        print(f"[!] 保存管道状态失败: {e}")
+
+
+def load_pipeline_state(state_path):
+    """从 JSON 文件加载翻译阶段的结果；如果文件不存在或损坏则返回 None"""
+    if not state_path.exists():
+        print(f"[!] 管道状态文件不存在: {state_path}")
+        return None
+    try:
+        with open(state_path, 'r', encoding='utf-8') as f:
+            state = json.load(f)
+        # 基本完整性校验
+        required_keys = ["chinese_texts", "english_texts", "b_title", "b_desc", "b_tags"]
+        if all(k in state for k in required_keys):
+            print(f"[*] 已加载管道状态: {state_path.name}")
+            return state
+        else:
+            print(f"[!] 管道状态文件不完整: {state_path}")
+            return None
+    except Exception as e:
+        print(f"[!] 读取管道状态失败: {e}")
+        return None
+
+
+def parse_args():
+    """解析命令行参数"""
+    parser = argparse.ArgumentParser(
+        description="Bili_auto_sync - YouTube → Bilibili 自动化搬运管线",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  python main.py                          # 默认：从下载开始完整运行
+  python main.py --start-from translate   # 跳过下载，从 AI 翻译开始
+  python main.py --start-from compose     # 跳过下载和翻译，直接压制字幕
+        """.strip()
+    )
+    parser.add_argument(
+        '--start-from',
+        choices=VALID_STAGES,
+        default=None,
+        help=f"指定从哪个阶段开始执行（默认: 读取配置文件 pipeline.start_from，fallback 为 download）。"
+             f"可选: {', '.join(VALID_STAGES)}"
+    )
+    return parser.parse_args()
+
 
 def main():
     setup_logger()
     print("========================================")
     print("--- Bilibili Auto Sync 生产线启动 ---")
-    
+
+    # ── 解析参数与配置 ──
+    args = parse_args()
     config = load_config()
+
     if config['deepseek']['api_key'] == "YOUR_DEEPSEEK_API_KEY_HERE":
         print("[!] 警告: 未配置 API Key。")
         return
 
-    # 1. 获取视频 (受 max_downloads_per_run 限制)
-    downloads = download_video()
+    # 确定起始阶段：CLI 参数 > 配置文件 > 默认 "download"
+    cli_stage = args.start_from
+    config_stage = config.get('pipeline', {}).get('start_from', 'download')
+    start_from = cli_stage or config_stage
+
+    if start_from not in VALID_STAGES:
+        print(f"[!] 无效的起始阶段 '{start_from}'，回退为 'download'")
+        start_from = 'download'
+
+    print(f"[*] 管道起始阶段: {start_from}")
+    print("========================================")
+
+    # ═══════════════════════════════════════════
+    # 阶段 1: 下载
+    # ═══════════════════════════════════════════
+    if start_from == 'download':
+        print("\n>>> [阶段 1/3] 下载 YouTube 视频")
+        clean_temp_dir()          # 显式清理旧临时文件
+        downloads = download_video()  # 运行 yt-dlp + 扫描结果
+    else:
+        print(f"\n>>> [阶段 1/3] 跳过下载（start_from={start_from}），扫描已有文件...")
+        downloads = scan_downloaded_files()
+        if not downloads:
+            print("[!] TEMP_DIR 中没有找到已下载的视频文件。")
+            print("[!] 请先使用 --start-from download 运行完整下载流程。")
+            return
+
     if not downloads:
+        print("[*] 本轮没有新视频需要处理。")
         return
 
-    # 读取清理策略配置 (默认只删临时文件，保留中字成片)
+    # ── 读取清理策略配置 ──
     bili_config = config.get('bilibili', {})
-    delete_temp = bili_config.get('delete_temp_files', True) 
-    delete_final = bili_config.get('delete_final_video', False) 
+    delete_temp = bili_config.get('delete_temp_files', True)
+    delete_final = bili_config.get('delete_final_video', False)
 
-    # 2. 遍历处理
-    for video_path, srt_path, desc_path, uploader_id, uploader_name, source_url, cover_path in downloads: 
+    # ═══════════════════════════════════════════
+    # 遍历处理每个视频
+    # ═══════════════════════════════════════════
+    for video_path, srt_path, desc_path, uploader_id, uploader_name, source_url, cover_path in downloads:
         video_title = Path(video_path).stem
         print(f"\n{'='*40}")
         print(f">>> 开始处理视频: {video_title}")
-        
-        if uploader_id: print(f"[*] 所属频道id: {uploader_id}")
-        if uploader_name: print(f"[*] 所属频道: {uploader_name}")
+
+        if uploader_id:
+            print(f"[*] 所属频道id: {uploader_id}")
+        if uploader_name:
+            print(f"[*] 所属频道: {uploader_name}")
 
         if not srt_path:
             print("[!] 未找到字幕，跳过。")
             continue
 
-        max_retries = 3
-        process_success = False
-        upload_success = False
-        b_title = video_title # 给一个默认标题保底
-        
         output_video_path = TEMP_DIR / f"{video_title}_zh_sub.mp4"
         ass_path = TEMP_DIR / f"{video_title}.ass"
+        state_path = TEMP_DIR / f"{video_title}_pipeline_state.json"
 
-        # === AI翻译与压制：重试循环 ===
-        for attempt in range(max_retries):
-            try:
-                if attempt > 0:
-                    print(f"\n[*] 第 {attempt + 1} 次尝试处理...")
+        b_title = video_title  # 默认标题保底
+        b_desc = ""
+        b_tags = []
+        process_success = False
 
-                # 翻译字幕
-                chinese_texts, english_texts = translate_subtitles(srt_path, uploader_id)
-                if not chinese_texts:
-                    print("[!] 字幕翻译失败，准备重试...")
-                    continue
+        # ═══════════════════════════════════════
+        # 阶段 2: AI 翻译
+        # ═══════════════════════════════════════
+        if start_from in ('download', 'translate'):
+            print(f"\n>>> [阶段 2/3] AI 翻译字幕与元数据")
 
-                # 让 AI 生成 B 站专用标题、简介和 Tag
-                b_title, b_desc, b_tags = generate_bilibili_meta(video_title, desc_path, chinese_texts, uploader_name, uploader_id)
+            # 翻译字幕（传入 uploader_name 用于专有名词保留）
+            chinese_texts, english_texts = translate_subtitles(srt_path, uploader_id, uploader_name)
+            if not chinese_texts:
+                print(f"[!] 视频 {video_title} 字幕翻译失败，跳过。")
+                continue
 
-                # 生成 ASS 和压制
-                generate_ass(srt_path, chinese_texts, english_texts, ass_path)
-                process_success = hardcode_subtitles(video_path, ass_path, output_video_path)
-                
-                if process_success:
-                    break # 压制成功，跳出重试循环
-                else:
-                    print("[!] 压制步骤失败，准备重试...")
-                    
-            except Exception as e:
-                print(f"[!] 处理过程中发生异常: {e}")
+            # 生成 B 站元数据
+            b_title, b_desc, b_tags = generate_bilibili_meta(
+                video_title, desc_path, chinese_texts, uploader_name, uploader_id
+            )
 
-        # === 循环结束后的分发逻辑 ===
+            # 持久化翻译结果，供后续 compose 阶段复用
+            save_pipeline_state(state_path, chinese_texts, english_texts, b_title, b_desc, b_tags)
+
+        elif start_from == 'compose':
+            print(f"\n>>> [阶段 2/3] 跳过翻译（start_from=compose），加载已保存结果...")
+
+            state = load_pipeline_state(state_path)
+            if not state:
+                print(f"[!] 视频 {video_title} 没有找到翻译结果。")
+                print(f"[!] 请先运行 --start-from translate 完成翻译步骤。")
+                continue
+
+            chinese_texts = state['chinese_texts']
+            english_texts = state['english_texts']
+            b_title = state['b_title'] or video_title
+            b_desc = state['b_desc']
+            b_tags = state['b_tags']
+
+        # ═══════════════════════════════════════
+        # 阶段 3: FFmpeg 压制
+        # ═══════════════════════════════════════
+        print(f"\n>>> [阶段 3/3] FFmpeg 硬字幕压制")
+
+        generate_ass(srt_path, chinese_texts, english_texts, ass_path)
+        process_success = hardcode_subtitles(video_path, ass_path, output_video_path)
+
+        # ═══════════════════════════════════════
+        # 阶段 4: 上传 B 站（可选）
+        # ═══════════════════════════════════════
         if process_success:
             if config['bilibili'].get('enable_upload', False):
-                upload_success = upload_to_bilibili(output_video_path, b_title, b_desc, b_tags, source_url, uploader_id, cover_path)
+                print(f"\n>>> [阶段 4/4] 上传至 Bilibili")
+                upload_success = upload_to_bilibili(
+                    output_video_path, b_title, b_desc, b_tags,
+                    source_url, uploader_id, cover_path
+                )
                 if not upload_success:
                     print(f"\n[!] 视频 {video_title} 上传失败。")
                     remove_from_archive(video_title)
             else:
-                print("[*] 配置文件设为不开启上传，直接转入本地归档逻辑。")
+                print("\n[*] 配置文件设为不开启上传，跳过。")
         else:
-            print(f"\n[!] 视频 {video_title} 经过 {max_retries} 次重试依然无法完成翻译或压制。")
-            remove_from_archive(video_title)
+            print(f"\n[!] 视频 {video_title} FFmpeg 压制失败。")
+            print(f"[*] 提示: 修复问题后可用 --start-from compose 直接从压制步骤重试。")
+            # 压制失败时保留下载文件和翻译结果，不清理 archive
 
-        # === 文件清理与本地归档 (完全独立于是否开启上传) ===
-        
-        # 1. 处理带有硬字幕的最终成片
+        # ═══════════════════════════════════════
+        # 文件清理与本地归档
+        # ═══════════════════════════════════════
+
+        # 1. 处理带硬字幕的最终成片
         if Path(output_video_path).exists():
             if delete_final:
                 print("[*] 策略 [删除最终成片]: 正在清理压制产物...")
                 Path(output_video_path).unlink(missing_ok=True)
             else:
                 COMPLETED_DIR.mkdir(parents=True, exist_ok=True)
-                # 使用安全函数保证中文名顺利保存
                 safe_chinese_title = sanitize_filename(b_title)
                 final_path = COMPLETED_DIR / f"{safe_chinese_title}.mp4"
                 shutil.move(str(output_video_path), str(final_path))
                 print(f"[*] 最终成片已保存至本地: {final_path}")
-        
+
         # 2. 处理原视频、字幕等临时材料
         if delete_temp:
             print("[*] 策略 [删除临时材料]: 正在清理源文件残留...")
             Path(video_path).unlink(missing_ok=True)
             Path(srt_path).unlink(missing_ok=True)
             Path(ass_path).unlink(missing_ok=True)
-            if desc_path: Path(desc_path).unlink(missing_ok=True)
-            if cover_path: Path(cover_path).unlink(missing_ok=True)
+            if desc_path:
+                Path(desc_path).unlink(missing_ok=True)
+            if cover_path:
+                Path(cover_path).unlink(missing_ok=True)
             info_file = TEMP_DIR / f"{video_title}.info.json"
             info_file.unlink(missing_ok=True)
+            # 注意：pipeline_state.json 也一并清理
+            state_path.unlink(missing_ok=True)
             print("[*] 临时文件清理完成。")
         else:
             print("[*] 策略 [保留临时材料]: 源文件依然存放在 temp_workspace 目录中。")
@@ -164,6 +295,7 @@ def main():
     print("\n========================================")
     print("--- 本轮处理任务结束 ---")
     print("========================================\n")
+
 
 if __name__ == "__main__":
     main()

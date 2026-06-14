@@ -8,138 +8,465 @@ from utils.config_manager import load_config
 def chunk_list(lst, n):
     for i in range(0, len(lst), n): yield lst[i:i + n]
 
+# --- NLTK 惰性初始化 ---
+_nltk_ready = False
+
+def _ensure_nltk_punkt():
+    """确保 NLTK punkt 分词器数据可用（惰性下载）"""
+    global _nltk_ready
+    if _nltk_ready:
+        return
+    try:
+        import nltk
+        # 优先尝试新版 punkt_tab (NLTK >= 3.9)
+        try:
+            nltk.data.find('tokenizers/punkt_tab')
+        except LookupError:
+            try:
+                nltk.download('punkt_tab', quiet=True)
+            except Exception:
+                pass
+        # 回退到经典 punkt
+        try:
+            nltk.data.find('tokenizers/punkt')
+        except LookupError:
+            nltk.download('punkt', quiet=True)
+        _nltk_ready = True
+    except Exception:
+        pass  # 如果 NLTK 完全不可用，后续会回退到正则模式
+
+
+def _build_time_map(full_text, merged_items):
+    """为 full_text 的每个字符位置建立 → 毫秒时间戳的线性映射"""
+    time_map = [0] * len(full_text)
+    text_pos = 0
+
+    for item in merged_items:
+        # 处理条目之间的空格（不属于任何条目的文本）
+        if text_pos > 0 and text_pos < len(full_text):
+            time_map[text_pos] = item['start']
+            text_pos += 1
+
+        item_text = item['text']
+        item_chars = len(item_text)
+        item_dur = item['end'] - item['start']
+
+        for i in range(item_chars):
+            if text_pos >= len(full_text):
+                break
+            if item_chars <= 1:
+                time_map[text_pos] = item['start']
+            else:
+                # 字符在条目时间跨度内线性插值
+                time_map[text_pos] = item['start'] + int(
+                    i / (item_chars - 1) * item_dur
+                )
+            text_pos += 1
+
+    return time_map
+
+
+def _split_long_english_sentence(sentence, max_len=100):
+    """按从句连词或逗号对超长英文句子进行软分割（递归），保证不在单词中间切断"""
+    if len(sentence) <= max_len:
+        return [sentence]
+
+    target = len(sentence) // 2
+    search_radius = max(target // 2, 20)
+    search_start = max(0, target - search_radius)
+    search_end = min(len(sentence), target + search_radius)
+
+    candidates = []  # (position, priority)
+
+    # 优先级 100：从句级连词 — ", and", ", but", ", because" 等
+    clause_re = re.compile(
+        r',\s+(?:and|but|because|which|who|so|or|yet|nor'
+        r'|while|although|however|therefore|if|when|where'
+        r'|whereas|unless|until|though|thus|hence)\s+',
+        re.IGNORECASE
+    )
+    for m in clause_re.finditer(sentence):
+        pos = m.start() + 1  # 在逗号之后切开
+        if search_start <= pos <= search_end:
+            candidates.append((pos, 100))
+
+    # 优先级 50：普通逗号
+    if not candidates:
+        for m in re.finditer(r',\s+', sentence):
+            pos = m.start() + 1
+            if search_start <= pos <= search_end:
+                candidates.append((pos, 50))
+
+    # 优先级 40：分号
+    if not candidates:
+        for m in re.finditer(r';\s+', sentence):
+            pos = m.start() + 1
+            if search_start <= pos <= search_end:
+                candidates.append((pos, 40))
+
+    # 优先级 20：空格（保证在单词边界切断）
+    if not candidates:
+        for m in re.finditer(r'\s+', sentence):
+            pos = m.start()
+            if search_start <= pos <= search_end:
+                candidates.append((pos, 20))
+
+    if not candidates:
+        return [sentence]  # 无法分割，保持原样
+
+    # 选择离 target 最近且优先级最高的位置
+    candidates.sort(key=lambda x: (abs(x[0] - target), -x[1]))
+    split_pos = candidates[0][0]
+
+    left = sentence[:split_pos].strip().rstrip(',')
+    right = sentence[split_pos:].strip()
+
+    if not left or not right:
+        return [sentence]
+
+    # 递归分割（防止分割后的子句依然超长）
+    result = []
+    result.extend(_split_long_english_sentence(left, max_len))
+    result.extend(_split_long_english_sentence(right, max_len))
+    return result
+
+
+def _smart_sentence_tokenize(full_text):
+    """使用 NLTK 进行句子分割；若 NLTK 不可用则回退到正则模式"""
+    try:
+        import nltk
+        _ensure_nltk_punkt()
+        if _nltk_ready:
+            return nltk.sent_tokenize(full_text)
+    except Exception:
+        pass
+
+    # 回退：正则句子分割（处理 .?! 后跟空格+大写字母 或 行尾）
+    return re.split(r'(?<=[.?!])\s+(?=[A-Z"])', full_text)
+
+
 def optimize_srt(srt_path):
-    """终极修复：彻底重组 YouTube 破碎的自动字幕时间轴和断句"""
-    if not srt_path: return
+    """使用 NLTK 句子分割 + 从句级软断句 + 等比时间轴重组"""
+
+    if not srt_path:
+        return
     subs = pysrt.open(srt_path)
-    if not subs: return
-    
-    # 第一步：把所有破碎的字幕拼成一条时间连续的“长蛇”
+    if not subs:
+        return
+
+    # ── 第一步：收集所有碎片并构建映射 ──
     merged_items = []
     for sub in subs:
-        # 无情地删掉所有的换行符，用空格代替，并清理多余空格
         clean_text = re.sub(r'\s+', ' ', sub.text.replace('\n', ' ')).strip()
-        if not clean_text: continue
-        
-        # 记录每一个碎片块的时间和文字
+        if not clean_text:
+            continue
         merged_items.append({
             'start': sub.start.ordinal,
             'end': sub.end.ordinal,
-            'text': clean_text
+            'text': clean_text,
         })
-        
-    # 第二步：基于标点符号，重新把这条“长蛇”切分成完美的语义句子
-    optimized_subs = pysrt.SubRipFile()
-    
-    current_sentence = ""
-    current_start = -1
-    current_end = -1
-    
+
+    if not merged_items:
+        return
+
+    # 拼接完整文本（条目之间用一个空格分隔）
+    full_text_parts = []
     for item in merged_items:
-        # 初始化句子的起始时间
-        if current_start == -1:
-            current_start = item['start']
-            
-        # 累加文字
-        if current_sentence:
-            current_sentence += " " + item['text']
-        else:
-            current_sentence = item['text']
-            
-        # 更新当前句子的结束时间为这个碎片的结束时间
-        current_end = item['end']
-        
-        # 核心判断：如果这句话遇到了结尾标点，或者实在太长了（比如没有标点瞎说了一通，强制 120 字符截断）
-        if re.search(r'[.?!]\s*$', current_sentence) or len(current_sentence) > 120:
-            # 建立一个全新的字幕块
+        full_text_parts.append(item['text'])
+    full_text = ' '.join(full_text_parts)
+
+    # 建立 字符位置 → 时间(ms) 映射
+    time_map = _build_time_map(full_text, merged_items)
+    text_len = len(full_text)
+
+    if text_len == 0:
+        return
+
+    # ── 第二步：NLTK 句子分割 ──
+    raw_sentences = _smart_sentence_tokenize(full_text)
+
+    # ── 第三步：逐句分配时间轴 ──
+    optimized_subs = pysrt.SubRipFile()
+    search_pos = 0  # 在 full_text 中顺序定位，处理重复句子
+
+    for sentence in raw_sentences:
+        sentence = sentence.strip()
+        if not sentence:
+            continue
+
+        # 在 full_text 中定位当前句子
+        pos = full_text.find(sentence, search_pos)
+        if pos == -1:
+            continue
+        sent_end = pos + len(sentence)
+        search_pos = sent_end  # 下一句从此之后搜索
+
+        # 从时间映射表取首尾毫秒
+        start_ms = time_map[min(pos, text_len - 1)]
+        end_ms = time_map[min(sent_end - 1, text_len - 1)]
+        if end_ms <= start_ms:
+            end_ms = start_ms + 500  # 最小持续 0.5 秒
+
+        # 判断是否需要从句级软分割
+        if len(sentence) <= 100:
+            # 长度适中，直接使用
             new_sub = pysrt.SubRipItem(
                 index=len(optimized_subs) + 1,
-                start=pysrt.SubRipTime(milliseconds=current_start),
-                end=pysrt.SubRipTime(milliseconds=current_end),
-                text=current_sentence.strip()
+                start=pysrt.SubRipTime(milliseconds=start_ms),
+                end=pysrt.SubRipTime(milliseconds=end_ms),
+                text=sentence,
             )
             optimized_subs.append(new_sub)
-            
-            # 清空缓存，准备迎接下一句话
-            current_sentence = ""
-            current_start = -1
-            
-    # 收尾：把最后可能还没遇到标点的话也加进去
-    if current_sentence:
-        new_sub = pysrt.SubRipItem(
-            index=len(optimized_subs) + 1,
-            start=pysrt.SubRipTime(milliseconds=current_start),
-            end=pysrt.SubRipTime(milliseconds=current_end),
-            text=current_sentence.strip()
-        )
-        optimized_subs.append(new_sub)
-        
-    # 第三步：消除由于重新切分导致的时间轴微小重叠
+        else:
+            # 超长句 → 从句连词/逗号软分割 + 等比时间分配
+            sub_sentences = _split_long_english_sentence(sentence)
+            total_chars = sum(len(s) for s in sub_sentences)
+            if total_chars == 0:
+                continue
+
+            duration = end_ms - start_ms
+            char_cursor = 0
+
+            for sub_sent in sub_sentences:
+                sub_len = len(sub_sent)
+                # 按字符数等比例分配时间
+                proportion = sub_len / total_chars
+                sub_start = start_ms + int(char_cursor / total_chars * duration)
+                sub_end = sub_start + max(int(proportion * duration), 300)
+
+                new_sub = pysrt.SubRipItem(
+                    index=len(optimized_subs) + 1,
+                    start=pysrt.SubRipTime(milliseconds=sub_start),
+                    end=pysrt.SubRipTime(milliseconds=sub_end),
+                    text=sub_sent.strip(),
+                )
+                optimized_subs.append(new_sub)
+                char_cursor += sub_len
+
+    # ── 第四步：消除时间轴微小重叠 ──
     for i in range(len(optimized_subs) - 1):
-        if optimized_subs[i].end > optimized_subs[i+1].start:
-            # 各让一步，取中点
-            mid_time = (optimized_subs[i].end.ordinal + optimized_subs[i+1].start.ordinal) // 2
+        if optimized_subs[i].end > optimized_subs[i + 1].start:
+            mid_time = (
+                optimized_subs[i].end.ordinal + optimized_subs[i + 1].start.ordinal
+            ) // 2
             optimized_subs[i].end = pysrt.SubRipTime(milliseconds=mid_time)
-            optimized_subs[i+1].start = pysrt.SubRipTime(milliseconds=mid_time)
+            optimized_subs[i + 1].start = pysrt.SubRipTime(milliseconds=mid_time)
 
-    optimized_subs.save(srt_path, encoding='utf-8')
+    # ── 第五步：消除过短字幕（闪屏字幕），合并到相邻条目 ──
+    MIN_DURATION_MS = 800  # 最短显示时长（毫秒）
 
-def translate_subtitles(srt_path, uploader_id=""):
-    if not srt_path: return [], []
+    merged_subs = []
+    skip_next = False
+
+    for i in range(len(optimized_subs)):
+        if skip_next:
+            skip_next = False
+            continue
+
+        sub = optimized_subs[i]
+        duration = sub.end.ordinal - sub.start.ordinal
+
+        if duration >= MIN_DURATION_MS:
+            merged_subs.append(sub)
+        elif i + 1 < len(optimized_subs):
+            # 过短：合并到下一条字幕
+            next_sub = optimized_subs[i + 1]
+            sub.text = sub.text.strip() + " " + next_sub.text.strip()
+            sub.end = next_sub.end
+            merged_subs.append(sub)
+            skip_next = True
+        else:
+            # 最后一条过短：延长到至少 MIN_DURATION_MS
+            sub.end = pysrt.SubRipTime(milliseconds=sub.start.ordinal + MIN_DURATION_MS)
+            merged_subs.append(sub)
+
+    # 重新编号并保存
+    final_subs = pysrt.SubRipFile()
+    for i, sub in enumerate(merged_subs):
+        sub.index = i + 1
+        final_subs.append(sub)
+
+    final_subs.save(srt_path, encoding='utf-8')
+
+def _build_numbered_prompt(chunk, start_idx):
+    """将字幕块构建为编号格式的 prompt，编号从 start_idx+1 开始"""
+    lines = []
+    for j, text in enumerate(chunk):
+        lines.append(f"[{j + 1}] {text}")
+    return "\n".join(lines)
+
+
+def _parse_numbered_response(response_text, expected_count):
+    """从编号格式的 AI 响应中提取每条翻译，返回 (lines_list, is_valid)"""
+    lines = []
+    for j in range(1, expected_count + 1):
+        # 匹配 [N] 开头的内容，直到下一个 [N] 或文本末尾
+        pattern = rf'\[{j}\]\s*(.+?)(?=\[\d+\]|\Z)'
+        match = re.search(pattern, response_text, re.DOTALL)
+        if match:
+            lines.append(match.group(1).strip())
+        else:
+            lines.append(None)  # 标记缺失
+    return lines
+
+
+def translate_subtitles(srt_path, uploader_id="", uploader_name=""):
+    if not srt_path:
+        return [], []
     optimize_srt(srt_path)
     config = load_config()
     api_key = config['deepseek']['api_key']
     base_url = config['deepseek']['base_url']
-    model_name = config['deepseek'].get('model', 'deepseek-v4-flash') # 读取模型名称
-    
+    model_name = config['deepseek'].get('model', 'deepseek-v4-flash')
+
     if api_key == "YOUR_DEEPSEEK_API_KEY_HERE":
         print("[!] 请配置 DeepSeek API Key!")
         return [], []
 
     style_name = config.get('bilibili', {}).get('channel_styles', {}).get(uploader_id, 'default')
-    sys_prompt = config.get('prompts', {}).get(style_name, {}).get('subtitles', config['prompts']['default']['subtitles'])
+    sys_prompt = config.get('prompts', {}).get(style_name, {}).get(
+        'subtitles', config['prompts']['default']['subtitles']
+    )
+
+    proper_noun_instruction = _build_proper_noun_instruction(uploader_name, uploader_id, config)
+
+    # ── 系统消息（编号格式指令）──
+    system_message = (
+        f"{sys_prompt}{proper_noun_instruction}\n\n"
+        "【输出格式要求】\n"
+        "1. 输入是一组编号的英文字幕，每条格式为 [N] 原文。\n"
+        "2. 你必须逐条翻译，输出格式也必须严格为 [N] 中文译文。\n"
+        "3. 编号 [N] 必须原样保留，不得跳过、合并或新增编号。\n"
+        "4. 只输出翻译结果，绝对不要添加任何解释、备注或额外文字。"
+    )
 
     client = OpenAI(api_key=api_key, base_url=base_url)
     subs = pysrt.open(srt_path)
     english_texts = [sub.text for sub in subs]
     chinese_texts = []
     chunks = list(chunk_list(english_texts, 20))
-    print(f"[*] 开始翻译，使用模型: {model_name}...")
-    
+    total_chunks = len(chunks)
+    print(f"[*] 开始翻译，使用模型: {model_name}，共 {total_chunks} 块...")
+
+    # ── 上下文窗口：保留最近几轮对话以提供翻译连贯性 ──
+    MAX_CONTEXT_TURNS = 3  # 保留最近 3 轮 Q&A
+
     for index, chunk in enumerate(chunks):
-        source_text = " || ".join(chunk)
+        chunk_size = len(chunk)
+        source_text = _build_numbered_prompt(chunk, index * 20)
+
         prompt = (
-            "你是一个专业的影视字幕翻译。请将以下英文字幕翻译为流畅的中文。"
-            "原文的句子由 ' || ' 分隔，请你输出的中文也严格使用 ' || ' 分隔，"
-            "数量必须与原文完全一致。绝对不要输出解释性文字。\n\n"
-            f"原文：\n{source_text}"
+            f"请将以下 {chunk_size} 条英文字幕逐条翻译为中文，"
+            f"严格保持 [N] 编号格式：\n\n{source_text}"
         )
-        try:
-            response = client.chat.completions.create(
-                model=model_name,
-                messages=[
-                    # 使用动态获取的系统提示词，并且强调分隔符规则
-                    {"role": "system", "content": f"{sys_prompt}\n\n重要：你必须严格保持输入文本的结构，英文输入是以 ' || ' 分隔的句子，你的中文输出也必须使用 ' || ' 作为分隔符，且输出的句子数量必须与输入完全一致。"},
-                    {"role": "user", "content": prompt}
-                ],
-                # 如果是严谨科学，可以适当调低 temperature 让输出更稳定
-                temperature=0.2 if style_name == 'science_strict' else 0.4 
-            )
-            translated_text = response.choices[0].message.content.strip()
-            translated_lines = [line.strip() for line in translated_text.split('||')]
-            
-            if len(translated_lines) != len(chunk):
-                print(f"[!] 第 {index+1} 块行数不匹配，尝试修复...")
-                while len(translated_lines) < len(chunk): translated_lines.append(chunk[len(translated_lines)])
-                translated_lines = translated_lines[:len(chunk)]
-            
-            chinese_texts.extend(translated_lines)
-            print(f"    - 完成 {index + 1}/{len(chunks)} 块")
-        except Exception as e:
-            print(f"[!] 翻译失败: {e}")
-            chinese_texts.extend(chunk)
+
+        # 构建带上下文的 messages
+        messages = [{"role": "system", "content": system_message}]
+
+        # 添加上下文历史（前几轮的 Q&A）
+        context_start = max(0, index - MAX_CONTEXT_TURNS)
+        for ctx_idx in range(context_start, index):
+            if ctx_idx < len(chunks):
+                ctx_chunk = chunks[ctx_idx]
+                ctx_prompt = _build_numbered_prompt(ctx_chunk, ctx_idx * 20)
+                messages.append({
+                    "role": "user",
+                    "content": f"请将以下 {len(ctx_chunk)} 条英文字幕逐条翻译为中文，严格保持 [N] 编号格式：\n\n{ctx_prompt}"
+                })
+                # 从已翻译结果中取对应部分
+                ctx_start_line = ctx_idx * 20
+                ctx_end_line = min(ctx_start_line + len(ctx_chunk), len(chinese_texts))
+                ctx_translated = chinese_texts[ctx_start_line:ctx_end_line]
+                if ctx_translated:
+                    ctx_response = "\n".join(
+                        f"[{j+1}] {t}" for j, t in enumerate(ctx_translated)
+                    )
+                    messages.append({"role": "assistant", "content": ctx_response})
+
+        messages.append({"role": "user", "content": prompt})
+
+        # ── 翻译 + 重试逻辑 ──
+        translated_lines = None
+        max_retries = 2
+
+        for attempt in range(max_retries + 1):
+            try:
+                response = client.chat.completions.create(
+                    model=model_name,
+                    messages=messages,
+                    temperature=0.2 if style_name == 'science_strict' else 0.4,
+                )
+                raw_text = response.choices[0].message.content.strip()
+
+                # 解析编号格式
+                parsed = _parse_numbered_response(raw_text, chunk_size)
+                valid_count = sum(1 for x in parsed if x is not None)
+
+                if valid_count == chunk_size:
+                    translated_lines = parsed
+                    break
+                elif attempt < max_retries:
+                    # 重试：强调缺失的编号
+                    missing = [j+1 for j, x in enumerate(parsed) if x is None]
+                    print(f"    [!] 第 {index+1} 块缺失编号 {missing}，第 {attempt+1} 次重试...")
+                    retry_hint = (
+                        f"你的上一次输出丢失了以下编号的翻译：{missing}。"
+                        f"请重新输出完整的 {chunk_size} 条翻译，确保每条都有对应的 [N] 编号。\n\n{source_text}"
+                    )
+                    messages.append({"role": "user", "content": retry_hint})
+                else:
+                    # 最终回退：缺失的用英文原文填充（标为未翻译）
+                    print(f"    [!] 第 {index+1} 块经 {max_retries} 次重试仍缺失 {missing}，使用原文填充")
+                    for j in range(chunk_size):
+                        if parsed[j] is None:
+                            parsed[j] = chunk[j]
+                    translated_lines = parsed
+            except Exception as e:
+                if attempt < max_retries:
+                    print(f"    [!] 第 {index+1} 块 API 错误: {e}，第 {attempt+1} 次重试...")
+                else:
+                    print(f"    [!] 第 {index+1} 块翻译失败: {e}，使用原文填充")
+                    translated_lines = list(chunk)
+
+        if translated_lines is None:
+            translated_lines = list(chunk)
+
+        chinese_texts.extend(translated_lines)
+        print(f"    - 完成 {index + 1}/{total_chunks} 块")
 
     return chinese_texts, english_texts
+
+
+def _build_proper_noun_instruction(uploader_name, uploader_id, config):
+    """构建专有名词保留不翻译的指令，追加到系统提示词末尾"""
+    proper_nouns = set()
+
+    # 1. 频道名 / 上传者名（如 "320 sim pilot"，从 yt-dlp 元数据自动获取）
+    if uploader_name and uploader_name.strip():
+        proper_nouns.add(uploader_name.strip())
+
+    # 2. 全局专用名词列表（translation.preserve_proper_nouns）
+    custom_nouns = config.get('translation', {}).get('preserve_proper_nouns', [])
+    if isinstance(custom_nouns, list):
+        for noun in custom_nouns:
+            if noun and str(noun).strip():
+                proper_nouns.add(str(noun).strip())
+
+    # 3. 按频道 ID 匹配的专用名词（translation.channel_preserve_nouns）
+    channel_nouns = config.get('translation', {}).get('channel_preserve_nouns', {}).get(uploader_id, [])
+    if isinstance(channel_nouns, list):
+        for noun in channel_nouns:
+            if noun and str(noun).strip():
+                proper_nouns.add(str(noun).strip())
+
+    if not proper_nouns:
+        return ""
+
+    nouns_list = "\n".join(f"  - {n}" for n in sorted(proper_nouns))
+    return (
+        f"\n\n【专有名词保留规则】以下专有名词/品牌名/频道名请保持原文不翻译，"
+        f"直接原样保留在中文译文中：\n{nouns_list}"
+    )
 
 
 def generate_bilibili_meta(title, desc_path, sample_subs, uploader_name="", uploader_id=""):

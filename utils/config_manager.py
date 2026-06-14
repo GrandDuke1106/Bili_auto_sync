@@ -27,6 +27,9 @@ DEFAULT_CONFIG = {
         "max_downloads_per_run": 3,
         "proxy": "http://127.0.0.1:7890"
     },
+    "pipeline": {
+        "start_from": "download"
+    },
     "bilibili": {
         "enable_upload": False,
         "delete_temp_files": True,
@@ -82,8 +85,12 @@ DEFAULT_CONFIG = {
     },
     "subtitle": {
         "fonts_dir": "configs/fonts",
-        "zh_font_name": "Noto Sans SC", 
+        "zh_font_name": "Noto Sans SC",
         "en_font_name": "Fira Code"
+    },
+    "translation": {
+        "preserve_proper_nouns": [],
+        "channel_preserve_nouns": {}
     }
 }
 

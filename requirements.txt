@@ -4,3 +4,5 @@ pysubs2==1.8.1
 PyYAML==6.0.3
 yt-dlp
 biliup
+nltk>=3.9
+jieba>=0.42
