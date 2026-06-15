@@ -35,7 +35,7 @@ docker compose run --rm bili-sync
 docker compose run --rm --entrypoint pip bili-sync install whisperx
 ```
 
-Docker 镜像的设计哲学：**精简基础镜像 + 运行时按需下载大文件**。详见下方 [🐳 Docker 部署详解](#-docker-部署详解) 章节。
+详见下方 [🐳 Docker 部署详解](#-docker-部署详解) 章节。
 
 ---
 
@@ -94,17 +94,23 @@ biliup login
 |------|------|--------|--------|
 | `start_from` | 默认起始阶段 | `download` / `translate` / `compose` | `download` |
 
+> **注意：** 此处的`target_urls`和`channels`所填写的链接传递到`yt-dlp`没有语义上的区分，此处配置分开只是为了便于整理。
+
+> 并且可以填写任意含有视频的链接（如`https://www.youtube.com/watch?v=dQw4w9WgXcQ`），频道视频（如`https://www.youtube.com/channel/UCuAXFkgsw1L7xaCfnd5JJOw/videos`），播放列表（如`https://www.youtube.com/playlist?list=PLlaN88a7y2_oBUxLd3j23dkAFNtM-P24e`），短视频（如`https://www.youtube.com/channel/UCuAXFkgsw1L7xaCfnd5JJOw//shorts`）等，也就是相当于网页爬虫，能够下载当前标签内所有页码的所有视频。
+
+> 详细说明请参考[yt-dlp文档](https://github.com/yt-dlp/yt-dlp/blob/master/README.md)。
+
 #### 🅱️ Bilibili 上传设置
 | 字段 | 说明 | 默认值 |
 |------|------|--------|
 | `enable_upload` | 是否上传到 B 站（`false` 仅本地压片） | `false` |
 | `delete_temp_files` | 完成后删除原视频、字幕等临时材料 | `true` |
 | `delete_final_video` | 上传后删除成品硬字幕视频（省空间） | `false` |
-| `tid` | B 站分区 ID（122=野生动植物，详见 B 站文档） | `122` |
+| `tid` | B 站分区 ID（122=知识-野技能协会） | `122` |
 | `tags` | 基础标签列表（会与 AI 生成的标签合并） | `[翻译, YouTube]` |
 
 ##### 🎨 频道翻译风格 (`channel_styles`)
-通过频道 ID 为不同频道指定专属的翻译风格。可选风格：
+通过频道 ID 为不同频道指定专属的翻译风格。示例风格：
 
 | 风格名称 | 适用场景 |
 |----------|----------|
@@ -124,6 +130,8 @@ bilibili:
     UCAILTiWNai7Y2zsO8ECFxcA: aviation_sim   # 为某频道指定航空风格
     UCexample123: pure_math                    # 为另一频道指定数学风格
 ```
+
+用户可以自行添加各种风格提示词。
 
 ##### 📁 合集管理 (`collections`)
 上传视频后自动加入指定合集（需先在 B 站创作中心手动创建该合集）。
@@ -187,7 +195,7 @@ whisperx:
 
 > 💡 **工作流程**：启用后，yt-dlp 下载的 YouTube 自动字幕会被 WhisperX 生成的词级对齐字幕**完全替换**。后续的 AI 翻译和压制流程不受影响。如果 WhisperX 转录失败（如显存不足），程序会自动回退到 yt-dlp 自带字幕。
 
-> 📦 **模型缓存**：WhisperX 模型（约 4.2GB）首次下载后永久缓存于 `~/.cache/huggingface/hub/`，后续运行直接加载，无需重复下载。若已通过代理/镜像成功下载过一次，后续可设置 `hf_offline: true` 跳过网络检查。
+> 📦 **模型缓存**：WhisperX 模型（约 4.2GB）首次下载后缓存于 `~/.cache/huggingface/hub/`，后续运行直接加载，无需重复下载。若已通过代理/镜像成功下载过一次，后续可设置 `hf_offline: true` 跳过网络检查。
 
 #### 🖋️ 字幕字体
 | 字段 | 说明 | 默认值 |
@@ -195,6 +203,8 @@ whisperx:
 | `fonts_dir` | 字体文件目录 | `configs/fonts` |
 | `zh_font_name` | 中文字体名称 | `Noto Sans SC` |
 | `en_font_name` | 英文字体名称 | `Fira Code` |
+
+用户可以在此目录下加入其他字体文件，并指定中文或英文字体的名称。
 
 #### 🎬 FFmpeg 视频编码器设置
 
@@ -235,7 +245,7 @@ ffmpeg:
 
 ## 🐳 Docker 部署详解
 
-> ⚠️ **实验性声明**：以下 Docker 部署方案为示例性质，**未经充分测试**。如遇到构建失败、权限异常、网络不通等问题，请在 GitHub Issues 中提出。
+> ⚠️ **实验性声明**：以下 Docker 部署方案为示例性质，**未经充分测试**。如遇到构建失败、权限异常、网络不通等问题，可以在 GitHub Issues 中提出。
 
 ### 镜像设计理念
 
@@ -340,7 +350,7 @@ python main.py
 
 ---
 
-### 方式二：分阶段运行 / 断点续传
+### 方式二：分阶段运行
 
 如果某个阶段失败（如翻译 API 超时、压制出错），可以从指定阶段重新开始，而无需重新下载视频。
 
