@@ -194,16 +194,11 @@ def generate_ass(srt_path, chinese_texts, english_texts, output_ass_path):
             zh_raw = chinese_texts[i].replace('\r', '').replace('\n', '').strip()
             en_raw = english_texts[i].replace('\r', '').replace('\n', ' ').strip()
 
-            # ── 中文智能换行：阈值提高到 55，确保中文单行显示（1中+1英）──
-            zh = _smart_line_break_chinese(zh_raw, max_line_width=55)
-
-            # ── 英文智能换行：宽度提高到 78，确保大部分英文单行显示 ──
-            en_wrapped = textwrap.wrap(en_raw, width=78)
-            en = "\\N".join(en_wrapped[:2])  # 实在过长才两行
-
-            # ── 去除行尾标点符号（行中间的标点保留）──
-            zh = _strip_line_end_punctuation(zh)
-            en = _strip_line_end_punctuation(en)
+            # ── 严格单行模式：不再对中文/英文做任何换行 ──
+            # 每个 ASS 事件固定为 1 行中文 + 1 行英文
+            # 长句分割由上游 optimize_srt / WhisperX 词级切分负责
+            zh = _strip_line_end_punctuation(zh_raw)
+            en = _strip_line_end_punctuation(en_raw)
 
             ass_text = f"{{\\rStyle_ZH}}{zh}\\N{{\\rStyle_EN}}{en}"
             event = pysubs2.SSAEvent(start=sub.start.ordinal, end=sub.end.ordinal, text=ass_text)

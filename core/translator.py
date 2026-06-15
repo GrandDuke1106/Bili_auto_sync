@@ -66,7 +66,7 @@ def _build_time_map(full_text, merged_items):
     return time_map
 
 
-def _rebalance_sentence_splits(sentences, max_len=100):
+def _rebalance_sentence_splits(sentences, max_len=65):
     """修正糟糕的分割：将结尾是连接词/开头是残片的块合并回一起。
 
     典型坏分割案例：
@@ -139,9 +139,11 @@ def _rebalance_sentence_splits(sentences, max_len=100):
     return result
 
 
-def _split_long_english_sentence(sentence, max_len=100):
+def _split_long_english_sentence(sentence, max_len=60):
     """按从句连词、逗号或语义边界对超长英文句子进行软分割（递归），
-    保证不在单词中间切断，并通过后处理修正不良分割。"""
+    保证不在单词中间切断，并通过后处理修正不良分割。
+    
+    max_len=60 确保英文能在 ASS 字幕中单行显示（Fira Code 12px ≈ 78 chars/行）"""
     if len(sentence) <= max_len:
         return [sentence]
 
@@ -331,14 +333,14 @@ def optimize_srt(srt_path):
             sentence = sentence.strip()
             if not sentence:
                 continue
-            if len(sentence) <= 100:
+            if len(sentence) <= 60:
                 all_sentences.append(sentence)
             else:
                 all_sentences.extend(_split_long_english_sentence(sentence))
 
         # ── 段落级后处理：修正跨句子边界的不良分割 ──
         # （例如 NLTK 的 "this is..." → 子分割 "so please keep" | "that in mind"）
-        all_sentences = _rebalance_sentence_splits(all_sentences, max_len=110)
+        all_sentences = _rebalance_sentence_splits(all_sentences, max_len=65)
 
         # ── 逐句分配时间轴 ──
         search_pos = 0

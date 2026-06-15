@@ -207,44 +207,122 @@ def convert_json3_subtitles():
             print(f"    [!] 转换 {json3_path.name} 失败: {e}")
 
 
-def _whisperx_segments_to_srt(segments, srt_path):
+def _whisperx_segments_to_srt(segments, srt_path, max_chars_per_sub=55):
     """将 WhisperX 的 segments 输出（含词级时间戳）转换为 SRT 文件。
 
-    每个 segment 作为一个字幕条目，使用第一个词的 start 和最后一个词的 end
-    作为精确时间轴，确保时间对齐到词级。
+    核心改进：利用 WhisperX 的**词级毫秒时间戳**，将过长的 segment
+    在自然词语边界处精确切开。每个子条目用对应词的时间戳，
+    确保字幕时间轴与发音完美对齐。
+
+    WhisperX 词级数据结构：
+      {
+        "start": 0.0, "end": 5.2,
+        "text": "hello world this is a test",
+        "words": [
+          {"word": "hello", "start": 0.00, "end": 0.52, "score": 0.9},
+          {"word": "world", "start": 0.58, "end": 1.05, "score": 0.95},
+          ...
+        ]
+      }
     """
     subs = pysrt.SubRipFile()
     for seg in segments:
         text = seg.get('text', '').strip()
         if not text:
             continue
+        text = re.sub(r'\s+', ' ', text).strip()
+        if not text:
+            continue
 
         words = seg.get('words', [])
-        if words:
-            # 词级精度：第一个词的开始 → 最后一个词的结束
-            start_ms = int(words[0].get('start', seg['start']) * 1000)
-            end_ms = int(words[-1].get('end', seg['end']) * 1000)
-        else:
-            # 回退到段级时间戳
+        if not words:
+            # 无词级数据：回退到段级时间戳
             start_ms = int(seg['start'] * 1000)
             end_ms = int(seg['end'] * 1000)
+            if end_ms <= start_ms:
+                end_ms = start_ms + 500
+            sub = pysrt.SubRipItem(
+                index=len(subs) + 1,
+                start=pysrt.SubRipTime(milliseconds=start_ms),
+                end=pysrt.SubRipTime(milliseconds=end_ms),
+                text=text,
+            )
+            subs.append(sub)
+            continue
 
-        if end_ms <= start_ms:
-            end_ms = start_ms + 500
+        # ── 利用词级时间戳：将长 segment 在词边界切开 ──
+        if len(text) <= max_chars_per_sub:
+            # 短文本：直接作为一个条目，使用首尾词精确时间
+            start_ms = int(words[0].get('start', seg['start']) * 1000)
+            end_ms = int(words[-1].get('end', seg['end']) * 1000)
+            if end_ms <= start_ms:
+                end_ms = start_ms + 500
+            sub = pysrt.SubRipItem(
+                index=len(subs) + 1,
+                start=pysrt.SubRipTime(milliseconds=start_ms),
+                end=pysrt.SubRipTime(milliseconds=end_ms),
+                text=text,
+            )
+            subs.append(sub)
+        else:
+            # 长文本：按 max_chars_per_sub 分组，在词边界处切开
+            chunks = _split_words_into_chunks(words, max_chars_per_sub)
+            for chunk_words in chunks:
+                if not chunk_words:
+                    continue
+                chunk_text = ' '.join(w.get('word', '').strip() for w in chunk_words)
+                chunk_text = re.sub(r'\s+', ' ', chunk_text).strip()
+                if not chunk_text:
+                    continue
 
-        # 清理文本
-        text = re.sub(r'\s+', ' ', text).strip()
+                # 精确时间：第一个词的 start → 最后一个词的 end
+                chunk_start = int(chunk_words[0].get('start', 0) * 1000)
+                chunk_end = int(chunk_words[-1].get('end', 0) * 1000)
+                if chunk_end <= chunk_start:
+                    chunk_end = chunk_start + 500
 
-        sub = pysrt.SubRipItem(
-            index=len(subs) + 1,
-            start=pysrt.SubRipTime(milliseconds=start_ms),
-            end=pysrt.SubRipTime(milliseconds=end_ms),
-            text=text,
-        )
-        subs.append(sub)
+                sub = pysrt.SubRipItem(
+                    index=len(subs) + 1,
+                    start=pysrt.SubRipTime(milliseconds=chunk_start),
+                    end=pysrt.SubRipTime(milliseconds=chunk_end),
+                    text=chunk_text,
+                )
+                subs.append(sub)
 
     subs.save(str(srt_path), encoding='utf-8')
     return str(srt_path)
+
+
+def _split_words_into_chunks(words, max_chars=55):
+    """将词列表按 max_chars 分组，保证在词边界切开。
+
+    返回 [[word_dict, ...], ...] 每个子列表是一个分块。
+    """
+    chunks = []
+    current_chunk = []
+    current_len = 0
+
+    for w in words:
+        word_text = w.get('word', '').strip()
+        if not word_text:
+            continue
+        word_len = len(word_text)
+        # +1 for leading space (except first word in chunk)
+        effective_len = word_len + (1 if current_chunk else 0)
+
+        if current_chunk and current_len + effective_len > max_chars:
+            # 当前块已满，保存并开始新块
+            chunks.append(current_chunk)
+            current_chunk = [w]
+            current_len = word_len
+        else:
+            current_chunk.append(w)
+            current_len += effective_len
+
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return chunks
 
 
 def run_whisperx_on_videos():
