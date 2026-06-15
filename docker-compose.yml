@@ -1,0 +1,70 @@
+# Bili_auto_sync Docker Compose 部署配置
+#
+# 快速开始:
+#   1. 确保 configs/config.yaml 已配置好 DeepSeek API Key 和 YouTube 目标
+#   2. 生成 B 站登录凭证（二选一）:
+#      a) 宿主机已有 biliup: 直接在宿主机运行 `biliup login`，cookies.json 会保存到 configs/
+#      b) 使用 Docker 辅助服务: docker compose run --rm bili-sync-login
+#   3. 运行管线: docker compose run --rm bili-sync
+#   4. (可选) 安装 WhisperX 获得词级时间戳字幕:
+#      docker compose run --rm --entrypoint pip bili-sync install whisperx
+#      模型文件 (~4.2GB) 将在首次转录时自动下载到 whisperx_cache 卷
+#   5. (可选) 定时运行: 配合 cron 或 systemd timer 周期性执行
+
+services:
+  # ── 主服务：执行 YouTube → Bilibili 搬运管线 ──
+  bili-sync:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: bili-auto-sync:latest
+    container_name: bili-sync
+
+    volumes:
+      - ./configs:/app/configs:ro           # 配置文件（只读）
+      - ./data:/app/data                     # 下载 + 成品输出
+      - ./logs:/app/logs                     # 运行日志
+      - whisperx_cache:/root/.cache/huggingface  # WhisperX 模型缓存
+      - nltk_data:/root/nltk_data            # NLTK 分词数据
+
+    environment:
+      - TZ=Asia/Shanghai
+      # 代理配置（如需翻墙访问 YouTube / DeepSeek API）:
+      # - HTTP_PROXY=http://host.docker.internal:7897
+      # - HTTPS_PROXY=http://host.docker.internal:7897
+
+    # GPU 支持（仅 WhisperX CUDA 转录需要）
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: 1
+    #           capabilities: [gpu]
+
+    # 可通过 command 覆盖入口脚本的默认参数:
+    # command: ["--start-from", "translate"]
+
+    restart: "no"
+
+  # ── 辅助服务：在容器内执行 biliup login，生成 cookies.json ──
+  bili-sync-login:
+    image: bili-auto-sync:latest
+    container_name: bili-sync-login
+    build:
+      context: .
+      dockerfile: Dockerfile
+    entrypoint: ["biliup", "login"]
+    # 交互模式需要终端
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./configs:/app/configs               # 可写，以便保存 cookies.json
+    restart: "no"
+
+# 命名卷：持久化大体积模型缓存，避免每次重建容器后重复下载
+volumes:
+  whisperx_cache:
+    name: bili-sync-whisperx-cache
+  nltk_data:
+    name: bili-sync-nltk-data

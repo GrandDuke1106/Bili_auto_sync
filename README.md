@@ -6,12 +6,36 @@
 
 ## 🛠️ 环境准备
 
-在开始之前，请确保你的系统（Windows WSL 或 Linux 服务器）已安装以下基础环境：
+### 方式 A：传统 Python 环境（适用于 Linux / Windows WSL）
+
+请确保你的系统已安装：
 
 1. **Python 3.8 或以上版本**
 2. **FFmpeg**
    * *Ubuntu/Debian:* `sudo apt install ffmpeg`
    * *CentOS:* `sudo yum install ffmpeg`
+
+### 方式 B：Docker 部署（跨平台，实验性）
+
+如果你不想手动配置 Python 环境，或希望在 Windows/macOS 上直接运行，可使用 Docker。
+
+> ⚠️ **实验性声明**：Docker 部署方案为示例性质，**未经充分测试**，可能存在未知问题。如遇到 Bug 请在 GitHub Issues 中反馈。
+
+```bash
+# 1. 构建镜像（约 400MB，不含 WhisperX）
+docker compose build
+
+# 2. 登录 B 站（交互式，按提示扫码）
+docker compose run --rm bili-sync-login
+
+# 3. 运行管线
+docker compose run --rm bili-sync
+
+# 4. (可选) 安装 WhisperX 以获得词级时间戳字幕
+docker compose run --rm --entrypoint pip bili-sync install whisperx
+```
+
+Docker 镜像的设计哲学：**精简基础镜像 + 运行时按需下载大文件**。详见下方 [🐳 Docker 部署详解](#-docker-部署详解) 章节。
 
 ---
 
@@ -129,7 +153,7 @@ translation:
       - IFR
 ```
 
-#### 🎙️ WhisperX 词级时间戳转录（可选，实验性）
+#### 🎙️ WhisperX 词级时间戳转录（可选）
 WhisperX 可以生成**词级毫秒精度**的时间戳，彻底解决 YouTube 自动字幕时间轴与语音不同步的问题。启用后，字幕中的每一句话都会精确对齐到说话人的发音时刻。
 
 > ⚠️ **硬件要求**：WhisperX 需要 **NVIDIA GPU + CUDA**，显存建议 ≥8GB（`large-v3` 模型约需 6GB）。CPU 模式极慢，不推荐用于长视频。
@@ -171,6 +195,117 @@ whisperx:
 | `fonts_dir` | 字体文件目录 | `configs/fonts` |
 | `zh_font_name` | 中文字体名称 | `Noto Sans SC` |
 | `en_font_name` | 英文字体名称 | `Fira Code` |
+
+#### 🎬 FFmpeg 视频编码器设置
+
+硬字幕压制阶段使用 FFmpeg。`video_args` 为**原始 FFmpeg 参数列表**，原样传递给 `ffmpeg` 命令（放在 `-vf` 滤镜之后、`-c:a` 之前）。你可以直接查阅 FFmpeg 官方文档后将参数粘贴进来。
+
+| 字段 | 说明 | 默认值 |
+|------|------|--------|
+| `video_args` | FFmpeg 视频编码原始参数列表 | `["-c:v", "libx264", "-preset", "medium", "-crf", "23"]` |
+| `audio_encoder` | 音频编码器 | `copy` |
+
+**常用平台配置（直接复制粘贴即可）：**
+
+```yaml
+# CPU 软编码（默认，最通用）
+ffmpeg:
+  video_args: ["-c:v", "libx264", "-preset", "medium", "-crf", "23"]
+  audio_encoder: copy
+
+# NVIDIA GPU 硬编码（NVENC）
+ffmpeg:
+  video_args: ["-c:v", "h264_nvenc", "-preset", "p4", "-cq", "18", "-b:v", "0"]
+  audio_encoder: copy
+
+# AMD GPU 硬编码（AMF）
+ffmpeg:
+  video_args: ["-c:v", "h264_amf", "-quality", "balanced", "-qp_i", "18", "-qp_p", "18"]
+  audio_encoder: copy
+
+# Intel GPU 硬编码（QSV）
+ffmpeg:
+  video_args: ["-c:v", "h264_qsv", "-preset", "medium", "-global_quality", "23"]
+  audio_encoder: copy
+```
+
+> ⚠️ **注意**：硬件编码器需要对应的显卡驱动和 FFmpeg 编译支持。如果指定的编码器不可用，FFmpeg 会直接报错退出。建议先用默认的 CPU 软编码确认流程正常，再切换到硬件编码器。
+
+---
+
+## 🐳 Docker 部署详解
+
+> ⚠️ **实验性声明**：以下 Docker 部署方案为示例性质，**未经充分测试**。如遇到构建失败、权限异常、网络不通等问题，请在 GitHub Issues 中提出。
+
+### 镜像设计理念
+
+| 内容 | 位置 | 原因 |
+|------|------|------|
+| Python + pip 依赖 (~200MB) | 镜像内 | 运行必需 |
+| FFmpeg (~50MB) | 镜像内 | 字幕压制 + 音频提取必需 |
+| 字体文件 (~30MB) | 镜像内 | 静态资源，体积可控 |
+| NLTK 分词数据 (~10MB) | 镜像内 | 避免运行时网络依赖 |
+| **WhisperX + PyTorch (~3GB)** | **运行时按需安装** | 体积过大，多数用户不需要 |
+| **WhisperX 模型 (~4.2GB)** | **运行时自动下载 → 命名卷持久化** | 首次使用才下载，后续直接复用 |
+| 配置文件 + Cookies | 宿主机目录挂载 (`./configs`) | 敏感信息不入镜像 |
+| 下载视频 + 成品 | 宿主机目录挂载 (`./data`) | 方便查看和使用 |
+
+最终镜像体积约 **400MB**，不含 WhisperX 时为同等功能完整镜像的 1/10。
+
+### 构建与运行
+
+```bash
+# 1. 克隆项目并进入目录
+git clone <repo-url> && cd Bili_auto_sync
+
+# 2. 准备配置文件（首次使用会自动生成模板）
+mkdir -p configs data logs
+# 编辑 configs/config.yaml，至少填入 DeepSeek API Key
+
+# 3. 构建镜像
+docker compose build
+
+# 4. 登录 B 站
+docker compose run --rm bili-sync-login
+
+# 5. 运行完整管线
+docker compose run --rm bili-sync
+
+# 6. 或指定起始阶段运行
+docker compose run --rm bili-sync --start-from translate
+```
+
+### 卷挂载说明
+
+| 宿主机路径 | 容器内路径 | 权限 | 用途 |
+|-----------|-----------|------|------|
+| `./configs/` | `/app/configs/` | 只读 | 配置文件 + cookies |
+| `./data/` | `/app/data/` | 读写 | 下载视频 + 成品输出 |
+| `./logs/` | `/app/logs/` | 读写 | 运行日志 |
+| `whisperx_cache` (命名卷) | `/root/.cache/huggingface/` | 读写 | WhisperX 模型缓存 |
+| `nltk_data` (命名卷) | `/root/nltk_data/` | 读写 | NLTK 分词数据 |
+
+### 安装 WhisperX（可选）
+
+```bash
+# 在容器内安装 WhisperX（约 3GB 下载量）
+docker compose run --rm --entrypoint pip bili-sync install whisperx
+
+# 安装后正常运行即可，模型将在首次转录时自动下载（约 4.2GB）
+docker compose run --rm bili-sync
+```
+
+### 定时运行
+
+```bash
+# 使用 crontab 定时执行（每 6 小时）
+crontab -e
+# 添加: 0 */6 * * * cd /path/to/Bili_auto_sync && docker compose run --rm bili-sync >> logs/cron.log 2>&1
+```
+
+### Windows 用户特别说明
+
+Docker Desktop for Windows 可直接运行上述命令。如果容器内需要访问宿主机的代理（如 Clash），将 `docker-compose.yml` 中的代理环境变量取消注释，并将 `host.docker.internal` 保留即可（Docker Desktop 会自动解析此域名到宿主机）。
 
 ---
 
@@ -335,8 +470,27 @@ bilibili:
 * `logs/`：按天自动轮转的运行日志记录。
 * `utils/`：日志管理（`logger.py`）与配置管理（`config_manager.py`）工具类。
 
-## ⚖️ 许可证
+## ⚖️ 许可证与免责声明
 
-本项目基于[MIT](LICENSE)开源，不提供担保。
+### 本项目代码
+
+本项目 Python 代码基于 [MIT](LICENSE) 许可证开源，不提供任何形式的明示或暗示担保。
+
+### FFmpeg 许可证说明
+
+本项目的 Docker 镜像和运行流程中使用了 FFmpeg。Debian/Ubuntu 官方源中的 FFmpeg 通常以 GPL 许可证编译（包含 `libx264` 等 GPL 编码器）。请注意：
+
+- FFmpeg 自身的许可证适用于 FFmpeg 二进制本身
+- 本项目通过 `subprocess` 方式调用 FFmpeg 命令行工具，属于"独立进程间通信"（mere aggregation），**本项目的 Python 代码不因此受 GPL 传染**
+- 如果你分发包含 FFmpeg 的 Docker 镜像，你**需要遵守 FFmpeg 的 GPL 条款**（主要是提供 FFmpeg 源码的获取方式）
+- 如果你对此有顾虑，可自行替换为 LGPL 编译的 FFmpeg 版本（如 [BtbN/FFmpeg-Builds](https://github.com/BtbN/FFmpeg-Builds) 提供的 LGPL 静态构建），或从 Dockerfile 中移除 FFmpeg 改为运行时挂载
+
+### Docker 部署免责声明
+
+- Docker 部署方案（`Dockerfile`、`docker-compose.yml`、`scripts/docker-entrypoint.sh`）为**示例性质**，未经充分测试，可能存在未知问题
+- 使用 Docker 部署前请确保理解基本的 Docker 操作（卷挂载、网络配置、GPU 直通等）
+- 如遇到构建失败、权限异常、网络不通等问题，请在 GitHub Issues 中提出，附上完整的错误日志
+
+### 使用免责声明
 
 本项目仅供学习和技术研究使用。请勿将本软件用于任何商业用途或侵犯第三方版权的行为。使用本软件产生的任何法律后果由使用者自行承担。

@@ -2,6 +2,7 @@ openai>=2.33.0
 pysrt>=1.1.2
 pysubs2>=1.8.1
 PyYAML>=6.0.3
+ruamel.yaml>=0.18.0
 yt-dlp
 biliup
 nltk>=3.9
