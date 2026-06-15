@@ -237,14 +237,11 @@ def hardcode_subtitles(video_path, ass_path, output_video_path):
     fonts_dir_str = str(flat_fonts_dir).replace('\\', '/')
     ass_path_str = str(ass_path).replace('\\', '/')
 
-    # 转义 ffmpeg 滤镜参数中的特殊字符(使用反斜杠转义)
-    # ffmpeg 滤镜语法中特殊字符: \ ' : , [ ] ; = %
-    def _escape_ffmpeg_filter_arg(s):
-        for ch in "\\':,[];=%":
-            s = s.replace(ch, "\\" + ch)
-        return s
-    ass_path_escaped = _escape_ffmpeg_filter_arg(ass_path_str)
-    fonts_dir_escaped = _escape_ffmpeg_filter_arg(fonts_dir_str)
+    # 将 ASS 字幕文件复制为安全文件名（无特殊字符），避免 ffmpeg 滤镜参数转义问题
+    # 文件名中的 ' 等特殊字符在 ffmpeg 滤镜语法中极难正确处理
+    safe_ass_path = flat_fonts_dir.parent / "subtitle_safe.ass"
+    shutil.copy2(ass_path_str, safe_ass_path)
+    safe_ass_path_str = str(safe_ass_path).replace('\\', '/')
 
     env = os.environ.copy()
     env["FONTCONFIG_PATH"] = fonts_dir_str
@@ -253,7 +250,7 @@ def hardcode_subtitles(video_path, ass_path, output_video_path):
         "ffmpeg",
         "-y",
         "-i", str(video_path),
-        "-vf", f"ass='{ass_path_escaped}':fontsdir='{fonts_dir_escaped}'",
+        "-vf", f"ass={safe_ass_path_str}:fontsdir={fonts_dir_str}",
         #===cpu预设参数===
         # "-c:v", "libx264",        # 使用h264编码
         # "-preset", "fast",        # 编码速度
@@ -272,10 +269,10 @@ def hardcode_subtitles(video_path, ass_path, output_video_path):
         process = subprocess.Popen(
             command,
             stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT, 
+            stderr=subprocess.STDOUT,
             text=True,
             env=env,
-            bufsize=1, 
+            bufsize=1,
             universal_newlines=True
         )
 
@@ -294,3 +291,7 @@ def hardcode_subtitles(video_path, ass_path, output_video_path):
     except Exception as e:
         print(f"\n[!] FFmpeg 运行出错: {e}")
         return False
+    finally:
+        # 清理临时安全字幕文件
+        if safe_ass_path.exists():
+            safe_ass_path.unlink()
